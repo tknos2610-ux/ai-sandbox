@@ -10,16 +10,12 @@ permissions:
   issues: write
 
 jobs:
-  openhands-resolver:
+  call-openhands-resolver:
     if: github.event.label.name == 'fix-me'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Run OpenHands Resolver
-        uses: All-Hands-AI/OpenHands/resolver@main
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LLM_MODEL: "gemini/gemini-2.5-flash"
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+    uses: OpenHands/OpenHands/.github/workflows/openhands-resolver.yml@main
+    with:
+      macro: '@openhands-agent'
+      max_iterations: 30
+      LLM_MODEL: 'gemini/gemini-2.5-flash'
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
