@@ -10,31 +10,15 @@ permissions:
   issues: write
 
 jobs:
-  openhands-resolver:
+  call-openhands-resolver:
     if: github.event.label.name == 'fix-me'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install OpenHands
-        run: pip install openhands-ai
-
-      - name: Run OpenHands Resolver
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LLM_MODEL: "gemini/gemini-2.5-flash"
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          REPO_SLUG: ${{ github.repository }}
-        run: |
-          python -m openhands.resolver.resolve_issue \
-            --repo "$REPO_SLUG" \
-            --issue-number "$ISSUE_NUMBER" \
-            --llm-model "$LLM_MODEL" \
-            --llm-api-key "$LLM_API_KEY"
+    uses: All-Hands-AI/OpenHands/.github/workflows/openhands-resolver.yml@main
+    with:
+      macro: ${{ vars.OPENHANDS_MACRO || '@openhands-agent' }}
+      max_iterations: 50
+      base_container_image: docker.all-hands.dev/all-hands-ai/runtime:0.30-nikolaik
+      llm_model: "gemini/gemini-2.5-flash"
+    secrets:
+      PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      PAT_USERNAME: ${{ secrets.PAT_USERNAME }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
