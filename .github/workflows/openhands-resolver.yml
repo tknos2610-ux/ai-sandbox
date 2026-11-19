@@ -22,8 +22,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install OpenHands Resolver
-        run: pip install openhands-resolver
+      - name: Install OpenHands
+        run: pip install openhands-ai
 
       - name: Run OpenHands Resolver
         env:
