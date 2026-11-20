@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Lab & Notes</title>
+    <style>
+        :root {
+            --bg-color: #fdfdfd;
+            --surface-color: #ffffff;
+            --text-main: #2d3748;
+            --text-muted: #718096;
+            --border-color: #e2e8f0;
+            --accent-color: #3182ce;
+            --accent-hover: #2b6cb0;
+            --card-bg: #ffffff;
+            --badge-bg: #edf2f7;
+            --badge-text: #4a5568;
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+            --radius: 12px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            line-height: 1.6;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        /* Header */
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+            padding-bottom: 30px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #1a202c;
+            margin-bottom: 12px;
+            letter-spacing: -0.025em;
+        }
+
+        header p {
+            color: var(--text-muted);
+            font-size: 1.05rem;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        /* Sections */
+        section {
+            margin-bottom: 50px;
+        }
+
+        h2 {
+            font-size: 1.35rem;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Cards Grid */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            padding: 24px;
+            box-shadow: var(--shadow);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+        }
+
+        .card.coming-soon {
+            opacity: 0.7;
+            background-color: #fafbfc;
+        }
+
+        .card h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #2d3748;
+        }
+
+        .card p {
+            font-size: 0.925rem;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+        }
+
+        .badge {
+            display: inline-block;
+            background-color: var(--badge-bg);
+            color: var(--badge-text);
+            font-size: 0.75rem;
+            font-weight: 500;
+            padding: 3px 8px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            width: fit-content;
+        }
+
+        .btn {
+            display: inline-block;
+            background-color: var(--accent-color);
+            color: white;
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            padding: 8px 16px;
+            border-radius: 8px;
+            text-align: center;
+            transition: background-color 0.2s;
+            border: none;
+            cursor: pointer;
+        }
+
+        .btn:hover {
+            background-color: var(--accent-hover);
+        }
+
+        .btn.disabled {
+            background-color: #cbd5e0;
+            cursor: not-allowed;
+        }
+
+        /* Blog List */
+        .blog-list {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .blog-item {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            padding: 20px 24px;
+            cursor: pointer;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            box-shadow: var(--shadow);
+        }
+
+        .blog-item:hover {
+            border-color: #cbd5e0;
+            box-shadow: 0 6px 12px -2px rgba(0, 0, 0, 0.04);
+        }
+
+        .blog-meta {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .blog-item h3 {
+            font-size: 1.15rem;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 8px;
+        }
+
+        .blog-summary {
+            font-size: 0.925rem;
+            color: #4a5568;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding-top: 40px;
+            border-top: 1px solid var(--border-color);
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(4px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background-color: var(--surface-color);
+            border-radius: var(--radius);
+            max-width: 600px;
+            width: 100%;
+            max-height: 85vh;
+            overflow-y: auto;
+            padding: 30px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            position: relative;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--text-muted);
+            line-height: 1;
+        }
+
+        .modal-close:hover {
+            color: var(--text-main);
+        }
+
+        .modal-header {
+            margin-bottom: 20px;
+        }
+
+        .modal-header .blog-meta {
+            margin-bottom: 8px;
+        }
+
+        .modal-header h2 {
+            font-size: 1.5rem;
+            color: #1a202c;
+            margin-bottom: 0;
+        }
+
+        .modal-body {
+            font-size: 0.975rem;
+            color: #2d3748;
+            line-height: 1.8;
+        }
+
+        .modal-body p {
+            margin-bottom: 16px;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px 12px;
+            }
+            header h1 {
+                font-size: 1.75rem;
+            }
+            .card {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <h1>My Lab & Notes</h1>
+            <p>個人開発のミニアプリや日々の技術的メモ、備忘録を公開する実験室です。</p>
+        </header>
+
+        <!-- Mini Apps Section -->
+        <section>
+            <h2>ミニアプリ一覧</h2>
+            <div class="grid">
+                <!-- App 1 -->
+                <div class="card">
+                    <div>
+                        <span class="badge">公開中</span>
+                        <h3>シンプルタイマー</h3>
+                        <p>ブラウザで手軽に使える、集中作業用のミニタイマーとカウントダウンツール。</p>
+                    </div>
+                    <button class="btn" onclick="openAppModal()">アプリを開く</button>
+                </div>
+
+                <!-- App 2 (Coming Soon) -->
+                <div class="card coming-soon">
+                    <div>
+                        <span class="badge" style="background-color: #e2e8f0; color: #4a5568;">準備中</span>
+                        <h3>Markdownプレビュー</h3>
+                        <p>書いたその場でリアルタイムにプレビューできる軽量なMarkdownエディタ。</p>
+                    </div>
+                    <button class="btn disabled" disabled>準備中</button>
+                </div>
+
+                <!-- App 3 (Coming Soon) -->
+                <div class="card coming-soon">
+                    <div>
+                        <span class="badge" style="background-color: #e2e8f0; color: #4a5568;">準備中</span>
+                        <h3>カラーパレット生成</h3>
+                        <p>Webデザインに便利な美しい配色の組み合わせをワンクリックで生成。</p>
+                    </div>
+                    <button class="btn disabled" disabled>準備中</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Blog Posts Section -->
+        <section>
+            <h2>ブログ記事</h2>
+            <div class="blog-list">
+                <!-- Post 1 -->
+                <article class="blog-item" onclick="openBlog(1)">
+                    <div class="blog-meta">2026-11-18 &bull; 開発記録</div>
+                    <h3>GitHub Pagesで個人ブログ兼ミニアプリ集を作る理由</h3>
+                    <p class="blog-summary">外部サーバーや複雑なビルドツールを使わず、HTML・CSS・JavaScriptだけでクリーンな個人サイトを運用するメリットについて。</p>
+                </article>
+
+                <!-- Post 2 -->
+                <article class="blog-item" onclick="openBlog(2)">
+                    <div class="blog-meta">2026-11-15 &bull; 技術メモ</div>
+                    <h3>Vanilla JSでシンプルなモーダルウィンドウを実装する</h3>
+                    <p class="blog-summary">フレームワークに依存せず、アクセシブルかつスタイリッシュなモーダルを数行のCSSとJavaScriptで実装する方法。</p>
+                </article>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer>
+            <p>&copy; 2026 My Lab & Notes. All rights reserved.</p>
+        </footer>
+    </div>
+
+    <!-- Modal for Blog / App -->
+    <div class="modal-overlay" id="modalOverlay" onclick="closeModalOnOutside(event)">
+        <div class="modal-content" id="modalContent">
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <div id="modalInner">
+                <!-- Dynamic Content injected via JS -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const blogData = {
+            1: {
+                date: "2026-11-18",
+                category: "開発記録",
+                title: "GitHub Pagesで個人ブログ兼ミニアプリ集を作る理由",
+                content: `
+                    <p>近年のフロントエンド開発では、Next.jsやVite、各種CSSフレームワークなど高機能なツールが溢れています。しかし、ちょっとしたアイデアを形にして公開したいとき、あるいは長期間メンテナンスフリーで動かしたいとき、原点回帰としての「プレーンなHTML・CSS・JavaScript」には強力なメリットがあります。</p>
+                    <p><strong>1. ビルドエラーや依存関係の呪縛からの解放</strong><br>Node.jsのバージョンアップやnpmパッケージの脆弱性対応に追われることなく、数年後でもそのままブラウザで動作し続けます。</p>
+                    <p><strong>2. 圧倒的な表示スピードと軽量さ</strong><br>余分なJavaScriptバンドルがないため、モバイル回線でも一瞬でページが表示されます。iPhoneなどのスマートフォンからのアクセスでもストレスフリーです。</p>
+                    <p>このサイト（My Lab & Notes）は、そうしたシンプルな技術の美しさを再発見しつつ、日々の小さな創作物を集める場所として立ち上げました。</p>
+                `
+            },
+            2: {
+                date: "2026-11-15",
+                category: "技術メモ",
+                title: "Vanilla JSでシンプルなモーダルウィンドウを実装する",
+                content: `
+                    <p>Webサイトを作るときによく必要になるのがモーダルウィンドウです。ライブラリを導入するまでもない小規模なプロジェクトであれば、素のHTML/CSS/JSで簡単に、かつ美しく実装できます。</p>
+                    <p>ポイントは以下の3つです：</p>
+                    <p><strong>1. オーバーレイの背景ぼかし（backdrop-filter）</strong><br><code>background-color: rgba(0,0,0,0.5); backdrop-filter: blur(4px);</code> を指定することで、今時のモダンで洗練された質感を演出できます。</p>
+                    <p><strong>2. フレックスボックスによる中央配置</strong><br><code>display: flex; justify-content: center; align-items: center;</code> を使えば、画面サイズが変わっても常に中央にダイアログを綺麗に配置できます。</p>
+                    <p><strong>3. スクロール制御とアクセシビリティ</strong><br>背景をクリックしたときや、右上の閉じるボタン（&times;）を押したときにスムーズに閉じられるイベントリスナーを付与します。</p>
+                    <p>たったこれだけのコードで、スマートフォンでも快適に動作するモーダルが完成します。</p>
+                `
+            }
+        };
+
+        function openBlog(id) {
+            const post = blogData[id];
+            if (!post) return;
+
+            const html = `
+                <div class="modal-header">
+                    <div class="blog-meta">${post.date} &bull; ${post.category}</div>
+                    <h2>${post.title}</h2>
+                </div>
+                <div class="modal-body">
+                    ${post.content}
+                </div>
+            `;
+            document.getElementById('modalInner').innerHTML = html;
+            document.getElementById('modalOverlay').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function openAppModal() {
+            const html = `
+                <div class="modal-header">
+                    <div class="blog-meta">ミニアプリ</div>
+                    <h2>シンプルタイマー</h2>
+                </div>
+                <div class="modal-body" style="text-align: center;">
+                    <p>集中作業（ポモドーロ等）に便利なミニタイマーです。</p>
+                    <div style="font-size: 3rem; font-weight: 700; margin: 30px 0; font-variant-numeric: tabular-nums; color: #2d3748;" id="timerDisplay">25:00</div>
+                    <div style="display: flex; gap: 10px; justify-content: center;">
+                        <button class="btn" onclick="alert('タイマー機能のデモです！')">スタート</button>
+                        <button class="btn" style="background-color: #718096;" onclick="alert('リセットしました')">リセット</button>
+                    </div>
+                </div>
+            `;
+            document.getElementById('modalInner').innerHTML = html;
+            document.getElementById('modalOverlay').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeModal() {
+            document.getElementById('modalOverlay').classList.remove('active');
+            document.body.style.overflow = 'auto';
+        }
+
+        function closeModalOnOutside(event) {
+            if (event.target.id === 'modalOverlay') {
+                closeModal();
+            }
+        }
+
+        // Close on ESC key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeModal();
+            }
+        });
+    </script>
+</body>
+</html>
