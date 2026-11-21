@@ -40,6 +40,10 @@ jobs:
     env:
       LLM_MODEL: ${{ vars.LLM_MODEL }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_NUM_RETRIES: "8"
+      LLM_RETRY_MIN_WAIT: "60"
+      LLM_RETRY_MAX_WAIT: "120"
+      LLM_RETRY_MULTIPLIER: "1"
       MAX_ITERATIONS: ${{ vars.OPENHANDS_MAX_ITER || 20 }}
       TARGET_BRANCH: ${{ github.event.repository.default_branch }}
       ISSUE_NUMBER: ${{ github.event.issue.number }}
