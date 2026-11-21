@@ -139,13 +139,10 @@ jobs:
                           break
               # AIの最終的な回答(質問への答え)を取り出します。
               for ev in reversed(hist):
-                  if ev.get('source') != 'agent':
-                      continue
-                  args = ev.get('args') or {}
                   if ev.get('action') == 'finish':
-                      text = (args.get('final_thought') or args.get('thought') or '').strip()
-                  elif ev.get('action') == 'message':
-                      text = (args.get('content') or ev.get('message') or '').strip()
+                      text = (ev.get('final_thought') or (ev.get('args') or {}).get('final_thought') or '').strip()
+                  elif ev.get('action') == 'message' and ev.get('source') != 'user':
+                      text = (ev.get('content') or (ev.get('args') or {}).get('content') or '').strip()
                   else:
                       continue
                   if text:
