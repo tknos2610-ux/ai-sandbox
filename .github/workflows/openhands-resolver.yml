@@ -115,7 +115,7 @@ jobs:
           import json, os
           out = '/tmp/output/output.jsonl'
           res = {'has_patch': False, 'success': False, 'patch_len': 0, 'events': 0,
-                 'explanation': '', 'error': '', 'last_agent': ''}
+                 'explanation': '', 'error': '', 'last_agent': '', 'answer': ''}
           try:
               line = next(l for l in open(out, encoding='utf-8') if l.strip())
               d = json.loads(line)
@@ -133,6 +133,20 @@ jobs:
                       if isinstance(msg, str) and msg.strip():
                           res['last_agent'] = msg.strip()[:800]
                           break
+              # AIの最終的な回答(質問への答え)を取り出します。
+              for ev in reversed(hist):
+                  if ev.get('source') != 'agent':
+                      continue
+                  args = ev.get('args') or {}
+                  if ev.get('action') == 'finish':
+                      text = (args.get('final_thought') or args.get('thought') or '').strip()
+                  elif ev.get('action') == 'message':
+                      text = (args.get('content') or ev.get('message') or '').strip()
+                  else:
+                      continue
+                  if text:
+                      res['answer'] = text[:3000]
+                      break
           except Exception as e:
               res['error'] = 'output.jsonl を読めませんでした: %s' % e
           json.dump(res, open('/tmp/summary.json', 'w', encoding='utf-8'), ensure_ascii=False)
@@ -271,6 +285,15 @@ jobs:
                 diag,
                 `ログ: ${runUrl}`,
               ].join('\n') + details;
+            } else if (sm.answer && sm.has_patch === false) {
+              // ファイルの変更がなく、AIの回答があるとき(質問への回答)
+              body = [
+                `## 回答`,
+                sm.answer,
+                ``,
+                `---`,
+                `ファイルの変更はなく、${target} は変更していません。ログ: ${runUrl}`,
+              ].join('\n');
             } else {
               body = [
                 `## 作業のまとめ`,
