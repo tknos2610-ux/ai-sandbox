@@ -1,0 +1,15 @@
+{
+  "name": "My Lab & Notes",
+  "short_name": "LabNotes",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#fdfdfd",
+  "theme_color": "#3182ce",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
