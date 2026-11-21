@@ -160,11 +160,23 @@ jobs:
           GIT_USERNAME: openhands-agent
           PYTHONPATH: ""
         run: |
-          cd /tmp && python -m openhands.resolver.send_pull_request \
+          cd /tmp
+          # リゾルバの記録は標準エラーに出るため、2>&1 で取り込みます。
+          python -m openhands.resolver.send_pull_request \
             --issue-number "$ISSUE_NUMBER" \
             --pr-type branch \
-            --send-on-failure | tee branch_result.txt
-          grep "branch created" branch_result.txt | sed 's/.*\///g; s/.expand=1//g' > branch_name.txt
+            --send-on-failure 2>&1 | tee branch_result.txt || true
+          grep "branch created" branch_result.txt | head -n 1 | sed 's/.*\///g; s/.expand=1//g' > branch_name.txt || true
+          BRANCH="$(cat branch_name.txt)"
+          if [ -z "$BRANCH" ]; then
+            # 記録から読めないときは、リモートのブランチ一覧から探します。
+            BRANCH="$(git -C "$GITHUB_WORKSPACE" ls-remote --heads origin "openhands-fix-issue-${ISSUE_NUMBER}*" | awk '{print $2}' | sed 's#refs/heads/##' | sort -V | tail -n 1)"
+            echo "$BRANCH" > branch_name.txt
+          fi
+          if [ -z "$BRANCH" ]; then
+            echo "Branch was not created."; exit 1
+          fi
+          echo "Branch: $BRANCH"
 
       # 成功したときだけ、ブランチを main に早送りで反映します。
       - name: Merge into main
