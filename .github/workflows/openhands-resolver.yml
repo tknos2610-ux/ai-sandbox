@@ -2,9 +2,9 @@ name: Resolve Issue with OpenHands
 
 # Issue に "fix-me" ラベルを付ける、または Issue に
 # "@openhands-agent ..." とコメントすると動きます。
+# 成功したらPRを作らず、変更を直接 main に反映し、Issue に作業のまとめを書き込みます。
+# 失敗したら main には触れず、試した内容をブランチに残します。
 # OpenHands 0.62.0 (2025-11) のリゾルバを固定して使います。
-# 公式サンプルの "OpenHands/OpenHands/.github/workflows/openhands-resolver.yml@main" は
-# 現在のmainに存在しないため、使っていません。
 
 on:
   issues:
@@ -14,8 +14,11 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
   issues: write
+
+concurrency:
+  group: openhands-resolver
+  cancel-in-progress: false
 
 jobs:
   auto-fix:
@@ -51,10 +54,12 @@ jobs:
           fi
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -64,14 +69,14 @@ jobs:
           pip install "openhands-ai==0.62.0"
 
       - name: Comment on issue with start message
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             await github.rest.issues.createComment({
               issue_number: Number(process.env.ISSUE_NUMBER),
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `OpenHands started working on this issue. Progress: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+              body: `OpenHands が作業を開始しました。進み具合: https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
             });
 
       - name: Attempt to resolve issue
@@ -101,7 +106,7 @@ jobs:
           fi
 
       - name: Upload output.jsonl
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: resolver-output
@@ -109,7 +114,9 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      - name: Create draft PR or push branch
+      # 変更をいったん作業用ブランチに送ります(成功でも失敗でも)。
+      - name: Push work branch
+        id: push_branch
         if: always()
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -117,42 +124,99 @@ jobs:
           GIT_USERNAME: openhands-agent
           PYTHONPATH: ""
         run: |
-          if [ "${{ steps.check_result.outputs.RESOLUTION_SUCCESS }}" == "true" ]; then
-            cd /tmp && python -m openhands.resolver.send_pull_request \
-              --issue-number "$ISSUE_NUMBER" \
-              --target-branch "$TARGET_BRANCH" \
-              --pr-type draft \
-              --reviewer "${{ github.actor }}" | tee pr_result.txt && \
-              grep "PR created" pr_result.txt | sed 's/.*\///g' > pr_number.txt
+          cd /tmp && python -m openhands.resolver.send_pull_request \
+            --issue-number "$ISSUE_NUMBER" \
+            --pr-type branch \
+            --send-on-failure | tee branch_result.txt
+          grep "branch created" branch_result.txt | sed 's/.*\///g; s/.expand=1//g' > branch_name.txt
+
+      # 成功したときだけ、ブランチを main に早送りで反映します。
+      - name: Merge into main
+        id: merge_main
+        if: always() && steps.check_result.outputs.RESOLUTION_SUCCESS == 'true' && steps.push_branch.outcome == 'success'
+        run: |
+          BRANCH="$(cat /tmp/branch_name.txt)"
+          echo "MERGED=false" >> "$GITHUB_OUTPUT"
+          if [ -z "$BRANCH" ]; then
+            echo "No branch name found."; exit 0
+          fi
+          git config user.name "openhands-agent"
+          git config user.email "openhands-agent@users.noreply.github.com"
+          git fetch origin "$BRANCH"
+          git diff --name-status HEAD FETCH_HEAD > /tmp/files.txt
+          git diff --stat HEAD FETCH_HEAD > /tmp/diffstat.txt
+          if git merge --ff-only FETCH_HEAD && git push origin "HEAD:${TARGET_BRANCH}"; then
+            echo "MERGED=true" >> "$GITHUB_OUTPUT"
+            echo "MERGED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            git push origin --delete "$BRANCH" || true
           else
-            cd /tmp && python -m openhands.resolver.send_pull_request \
-              --issue-number "$ISSUE_NUMBER" \
-              --pr-type branch \
-              --send-on-failure | tee branch_result.txt && \
-              grep "branch created" branch_result.txt | sed 's/.*\///g; s/.expand=1//g' > branch_name.txt
+            echo "Could not fast-forward ${TARGET_BRANCH}; the branch '$BRANCH' is kept."
           fi
 
-      - name: Comment result on issue
-        uses: actions/github-script@v7
+      - name: Comment summary on issue
+        uses: actions/github-script@v9
         if: always()
         env:
           RESOLUTION_SUCCESS: ${{ steps.check_result.outputs.RESOLUTION_SUCCESS }}
+          MERGED: ${{ steps.merge_main.outputs.MERGED }}
+          MERGED_SHA: ${{ steps.merge_main.outputs.MERGED_SHA }}
         with:
           script: |
             const fs = require('fs');
-            const issue_number = Number(process.env.ISSUE_NUMBER);
             const { owner, repo } = context.repo;
-            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
+            const issue_number = Number(process.env.ISSUE_NUMBER);
+            const base = `https://github.com/${owner}/${repo}`;
+            const runUrl = `${base}/actions/runs/${context.runId}`;
             const read = (p) => { try { return fs.readFileSync(p, 'utf8').trim(); } catch (e) { return ''; } };
             const success = process.env.RESOLUTION_SUCCESS === 'true';
-            const prNumber = read('/tmp/pr_number.txt');
-            const branchName = read('/tmp/branch_name.txt');
+            const merged = process.env.MERGED === 'true';
+            const sha = process.env.MERGED_SHA || '';
+            const branch = read('/tmp/branch_name.txt');
+            const files = read('/tmp/files.txt');
+            const stat = read('/tmp/diffstat.txt').split('\n').pop();
+            const target = process.env.TARGET_BRANCH;
+
+            let explanation = '';
+            try {
+              const first = fs.readFileSync('/tmp/output/output.jsonl', 'utf8').split('\n').find((l) => l.trim());
+              explanation = (JSON.parse(first).result_explanation || '').trim().slice(0, 800);
+            } catch (e) {}
+
+            const details = explanation
+              ? `\n\n<details><summary>AIの判定メモ</summary>\n\n${explanation}\n\n</details>`
+              : '';
+
             let body;
-            if (success && prNumber) {
-              body = `A draft PR #${prNumber} has been created. Please review the changes.`;
-            } else if (branchName) {
-              body = `The attempt was not fully successful. Branch '${branchName}' has the attempted changes: https://github.com/${owner}/${repo}/tree/${branchName}`;
+            if (success && merged) {
+              body = [
+                `## 作業のまとめ`,
+                `Issue の内容を実装し、**${target}** に直接反映しました。`,
+                ``,
+                `- 反映したコミット: ${base}/commit/${sha}`,
+                `- 変更の規模: ${stat || '(不明)'}`,
+                ``,
+                `変更したファイル(A=追加, M=変更, D=削除):`,
+                '```',
+                files || '(なし)',
+                '```',
+                `GitHub Pages を有効にしている場合は、1〜2分後に公開内容が更新されます。`,
+                `ログ: ${runUrl}`,
+              ].join('\n') + details;
+            } else if (success && branch) {
+              body = [
+                `## 作業のまとめ`,
+                `実装はできましたが、${target} が更新されていたため、直接の反映はしませんでした。`,
+                `変更はブランチ \`${branch}\` に残してあります: ${base}/tree/${branch}`,
+                `ログ: ${runUrl}`,
+              ].join('\n') + details;
+            } else if (branch) {
+              body = [
+                `## 作業のまとめ`,
+                `自動での解決はできませんでした。${target} は変更していません。`,
+                `試した内容はブランチ \`${branch}\` に残してあります: ${base}/tree/${branch}`,
+                `ログ: ${runUrl}`,
+              ].join('\n') + details;
             } else {
-              body = `The workflow encountered an error. See the logs: ${runUrl}`;
+              body = `作業中にエラーが起きました。${target} は変更していません。ログを確認してください: ${runUrl}`;
             }
             await github.rest.issues.createComment({ issue_number, owner, repo, body });
