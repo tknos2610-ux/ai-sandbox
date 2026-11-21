@@ -4,6 +4,7 @@ name: Resolve Issue with OpenHands
 # "@openhands-agent ..." とコメントすると動きます。
 # 成功したらPRを作らず、変更を直接 main に反映し、Issue に作業のまとめを書き込みます。
 # 失敗したら main には触れず、試した内容をブランチに残します。
+# AIが何も変更しなかったときも、その状況をIssueに書き込みます。
 # OpenHands 0.62.0 (2025-11) のリゾルバを固定して使います。
 
 on:
@@ -105,6 +106,41 @@ jobs:
             echo "RESOLUTION_SUCCESS=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # AIの作業結果を読み取り、ログとIssueのコメント用に要点を残します。
+      - name: Summarize output
+        id: summarize
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json, os
+          out = '/tmp/output/output.jsonl'
+          res = {'has_patch': False, 'success': False, 'patch_len': 0, 'events': 0,
+                 'explanation': '', 'error': '', 'last_agent': ''}
+          try:
+              line = next(l for l in open(out, encoding='utf-8') if l.strip())
+              d = json.loads(line)
+              patch = d.get('git_patch') or ''
+              res['has_patch'] = bool(patch.strip())
+              res['patch_len'] = len(patch)
+              res['success'] = bool(d.get('success'))
+              res['explanation'] = (d.get('result_explanation') or '')[:1500]
+              res['error'] = str(d.get('error') or '')[:800]
+              hist = d.get('history') or []
+              res['events'] = len(hist)
+              for ev in reversed(hist):
+                  if ev.get('source') == 'agent':
+                      msg = ev.get('message') or ev.get('content') or ''
+                      if isinstance(msg, str) and msg.strip():
+                          res['last_agent'] = msg.strip()[:800]
+                          break
+          except Exception as e:
+              res['error'] = 'output.jsonl を読めませんでした: %s' % e
+          json.dump(res, open('/tmp/summary.json', 'w', encoding='utf-8'), ensure_ascii=False)
+          print(json.dumps(res, ensure_ascii=False, indent=2))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('HAS_PATCH=%s\n' % ('true' if res['has_patch'] else 'false'))
+          PY
+
       - name: Upload output.jsonl
         uses: actions/upload-artifact@v7
         if: always()
@@ -114,10 +150,10 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # 変更をいったん作業用ブランチに送ります(成功でも失敗でも)。
+      # 変更があるときだけ、作業用ブランチに送ります(成功でも失敗でも)。
       - name: Push work branch
         id: push_branch
-        if: always()
+        if: always() && steps.summarize.outputs.HAS_PATCH == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_USERNAME: openhands-agent
@@ -176,14 +212,19 @@ jobs:
             const stat = read('/tmp/diffstat.txt').split('\n').pop();
             const target = process.env.TARGET_BRANCH;
 
-            let explanation = '';
-            try {
-              const first = fs.readFileSync('/tmp/output/output.jsonl', 'utf8').split('\n').find((l) => l.trim());
-              explanation = (JSON.parse(first).result_explanation || '').trim().slice(0, 800);
-            } catch (e) {}
+            let sm = {};
+            try { sm = JSON.parse(read('/tmp/summary.json')); } catch (e) {}
 
-            const details = explanation
-              ? `\n\n<details><summary>AIの判定メモ</summary>\n\n${explanation}\n\n</details>`
+            const diag = [
+              `- AIの判定: ${sm.success ? '解決できた' : '解決できなかった'}`,
+              `- ファイルの変更: ${sm.has_patch ? 'あり' : 'なし'}`,
+              `- AIの動いた回数(イベント数): ${sm.events ?? '不明'}`,
+              sm.error ? `- エラー: ${sm.error}` : '',
+              sm.last_agent ? `- AIの最後の動き: ${sm.last_agent}` : '',
+            ].filter(Boolean).join('\n');
+
+            const details = sm.explanation
+              ? `\n\n<details><summary>AIの判定メモ</summary>\n\n${sm.explanation}\n\n</details>`
               : '';
 
             let body;
@@ -214,9 +255,17 @@ jobs:
                 `## 作業のまとめ`,
                 `自動での解決はできませんでした。${target} は変更していません。`,
                 `試した内容はブランチ \`${branch}\` に残してあります: ${base}/tree/${branch}`,
+                ``,
+                diag,
                 `ログ: ${runUrl}`,
               ].join('\n') + details;
             } else {
-              body = `作業中にエラーが起きました。${target} は変更していません。ログを確認してください: ${runUrl}`;
+              body = [
+                `## 作業のまとめ`,
+                `AIは作業を終えましたが、保存できる変更がありませんでした。${target} は変更していません。`,
+                ``,
+                diag,
+                `ログ: ${runUrl}`,
+              ].join('\n') + details;
             }
             await github.rest.issues.createComment({ issue_number, owner, repo, body });
