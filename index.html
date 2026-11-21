@@ -352,6 +352,20 @@
                     <h3>Vanilla JSでシンプルなモーダルウィンドウを実装する</h3>
                     <p class="blog-summary">フレームワークに依存せず、アクセシブルかつスタイリッシュなモーダルを数行のCSSとJavaScriptで実装する方法。</p>
                 </article>
+
+                <!-- Post 3 (Resolved version) -->
+                <article class="blog-item" onclick="openBlog(3)">
+                    <div class="blog-meta">2026-11-21 &bull; 解決版・開発記録</div>
+                    <h3>AIとiPhoneで実現するブログ自動化と公開の記録</h3>
+                    <p class="blog-summary">GitHubのIssueとAIを活用してブログ記事を作成し、GitHub Pagesで公開する流れと、iPhoneを活用した情報収集の解決版。</p>
+                </article>
+
+                <!-- Post 4 (Problem / Trouble version) -->
+                <article class="blog-item" onclick="openBlog(4)">
+                    <div class="blog-meta">2026-11-20 &bull; 問題発生版・トラブルシューティング</div>
+                    <h3>AIとiPhoneでのブログ自動化：発生したトラブルと試行錯誤の記録</h3>
+                    <p class="blog-summary">AIサービスの制限、OpenHandsの設定つまずき、iPhone単体運用における限界など、解決に至るまでの試行錯誤の記録。</p>
+                </article>
             </div>
         </section>
 
@@ -395,6 +409,28 @@
                     <p><strong>2. フレックスボックスによる中央配置</strong><br><code>display: flex; justify-content: center; align-items: center;</code> を使えば、画面サイズが変わっても常に中央にダイアログを綺麗に配置できます。</p>
                     <p><strong>3. スクロール制御とアクセシビリティ</strong><br>背景をクリックしたときや、右上の閉じるボタン（&times;）を押したときにスムーズに閉じられるイベントリスナーを付与します。</p>
                     <p>たったこれだけのコードで、スマートフォンでも快適に動作するモーダルが完成します。</p>
+                `
+            },
+            3: {
+                date: "2026-11-21",
+                category: "解決版・開発記録",
+                title: "AIとiPhoneで実現するブログ自動化と公開の記録",
+                content: `
+                    <p>本記事では、GitHubのIssueとAI（OpenHandsおよびGemini）を活用してブログ記事を作成し、GitHub Pagesで公開する流れについて、これまでの検証結果をまとめてご紹介します。また、iPhoneと無料枠のみを活用して情報を収集・公開する方法についても併せて解説します。</p>
+                    <p><strong>1. AIを活用したブログ作成・公開サービスの比較</strong><br>Issueに指示を出してAIにPull Requestを作らせるサービスについて検証し、無料かつ安定して動作するOpenHandsを採用しました。</p>
+                    <p><strong>2. OpenHandsの設定手順</strong><br>リポジトリへの <code>.github/workflows/openhands-resolver.yml</code> 配置、GitHub Actionsの権限設定、Google AI StudioでのGemini APIキー発行（Secretsの <code>LLM_API_KEY</code> とVariablesの <code>LLM_MODEL</code> 設定）、そして <code>fix-me</code> ラベルやコメントによる起動手順を確立しました。</p>
+                    <p><strong>3. iPhoneだけで情報を集めて公開する方法</strong><br>RSSとFeedly/ショートカットによる情報収集、手動でのX投稿まとめ、そしてGitHub Pagesによる完全無料のホスティングにより、PCなしでも公開が可能になりました。</p>
+                `
+            },
+            4: {
+                date: "2026-11-20",
+                category: "問題発生版・トラブルシューティング",
+                title: "AIとiPhoneでのブログ自動化：発生したトラブルと試行錯誤の記録",
+                content: `
+                    <p>本記事では、GitHubのIssueとAIを使ってブログ記事を作成・公開する過程で直面したトラブル、サービス制限、およびiPhoneのみでの運用における試行錯誤の履歴をまとめます。</p>
+                    <p><strong>1. AIサービスの制限とつまずき</strong><br>Julesの終了（12月31日）、GitHub CopilotやClaude Codeの有料制限、OpenAI Codexのクラウド機能なし、opencodeの未確認など、多くのサービスが無料枠でそのまま使えない壁にぶつかりました。また、OpenHands設定時の <code>repository variable LLM_MODEL is not set</code> エラーなども発生しました。</p>
+                    <p><strong>2. iPhone単体での情報収集と公開の限界</strong><br>X（Twitter）の公式API無料枠制限による自動取得の断念、Claude無料プランでのアーティファクト共有機能（公開リンク）の非対応、GitHubリポジトリ作成の手動対応など、モバイル環境ならではの制約に直面しました。</p>
+                    <p><strong>3. 教訓</strong><br>無料枠やモバイル環境での自動化は制約が多く、適切なツール選定とトラブルシューティングが不可欠であることを学びました。</p>
                 `
             }
         };
