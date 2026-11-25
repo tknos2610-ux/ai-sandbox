@@ -6,6 +6,8 @@ name: Resolve Issue with OpenHands
 # 失敗したら main には触れず、試した内容をブランチに残します。
 # AIが何も変更しなかったときも、その状況をIssueに書き込みます。
 # OpenHands 0.62.0 (2025-11) のリゾルバを固定して使います。
+# 503(混雑)などでAIとの通信が失敗したら、変数 LLM_MODEL_FALLBACK のモデルで自動的にやり直します。
+# LLM_MODEL_FALLBACK はカンマ区切りで複数指定できます(例: gemini/モデルA,gemini/モデルB)。
 
 on:
   issues:
@@ -39,8 +41,9 @@ jobs:
     timeout-minutes: 45
     env:
       LLM_MODEL: ${{ vars.LLM_MODEL }}
+      LLM_MODEL_FALLBACK: ${{ vars.LLM_MODEL_FALLBACK }}
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-      LLM_NUM_RETRIES: "8"
+      LLM_NUM_RETRIES: "4"
       LLM_RETRY_MIN_WAIT: "60"
       LLM_RETRY_MAX_WAIT: "120"
       LLM_RETRY_MULTIPLIER: "1"
@@ -85,6 +88,8 @@ jobs:
             });
 
       - name: Attempt to resolve issue
+        id: attempt
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_USERNAME: openhands-agent
@@ -99,6 +104,35 @@ jobs:
             --max-iterations "$MAX_ITERATIONS" \
             --comment-id "$COMMENT_ID" \
             --is-experimental false
+
+      # 1回目が通信エラーなどで失敗したときだけ、予備のモデルを順に試します。
+      - name: Retry with fallback models
+        id: fallback
+        if: steps.attempt.outcome == 'failure' && vars.LLM_MODEL_FALLBACK != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_USERNAME: openhands-agent
+          GIT_USERNAME: openhands-agent
+          SANDBOX_ENV_GITHUB_TOKEN: ${{ github.token }}
+          PYTHONPATH: ""
+        run: |
+          cd /tmp
+          for M in $(echo "$LLM_MODEL_FALLBACK" | tr ',' ' '); do
+            echo "Trying fallback model: $M"
+            rm -rf /tmp/output
+            if LLM_MODEL="$M" python -m openhands.resolver.resolve_issue \
+              --selected-repo "${{ github.repository }}" \
+              --issue-number "$ISSUE_NUMBER" \
+              --issue-type issue \
+              --max-iterations "$MAX_ITERATIONS" \
+              --comment-id "$COMMENT_ID" \
+              --is-experimental false; then
+              echo "Fallback model worked: $M"
+              exit 0
+            fi
+          done
+          echo "All fallback models failed."
+          exit 1
 
       - name: Check resolution result
         id: check_result
