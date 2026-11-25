@@ -94,6 +94,7 @@ jobs:
       - name: Attempt to resolve issue
         id: attempt
         continue-on-error: true
+        timeout-minutes: 25
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -104,13 +105,29 @@ jobs:
         run: |
           # ログを /tmp/attempt.log にも残します(予備モデルを使うか決めるため)。
           cd /tmp
+          : > /tmp/attempt.log
+          # 利用上限(429)になると OpenHands は何時間も待ち続けるため、
+          # ログに RATE_LIMITED が出たらすぐ打ち切って、予備モデルに切り替えます。
+          (
+            while sleep 10; do
+              if grep -q 'RATE_LIMITED' /tmp/attempt.log; then
+                echo "利用上限を検知したため、このモデルでの実行を打ち切ります。"
+                pkill -f 'openhands.resolver.resolve_issue' || true
+                break
+              fi
+            done
+          ) &
+          WATCH=$!
           python -m openhands.resolver.resolve_issue \
             --selected-repo "${{ github.repository }}" \
             --issue-number "$ISSUE_NUMBER" \
             --issue-type issue \
             --max-iterations "$MAX_ITERATIONS" \
             --comment-id "$COMMENT_ID" \
-            --is-experimental false 2>&1 | tee /tmp/attempt.log
+            --is-experimental false 2>&1 | tee -a /tmp/attempt.log
+          RC=${PIPESTATUS[0]}
+          kill "$WATCH" 2>/dev/null || true
+          exit "$RC"
 
       # 1回目が「通信エラー」で失敗したときだけ、予備のモデルを順に試します。
       # (通信以外の失敗は、モデルを替えても直らないので試しません)
@@ -127,8 +144,8 @@ jobs:
           PYTHONPATH: ""
         run: |
           cd /tmp
-          if ! grep -Eqi 'ServiceUnavailable|RateLimit|Overloaded|APIConnection|Timeout|\b503\b|\b429\b' /tmp/attempt.log; then
-            echo "1回目の失敗は通信エラーではないため、予備モデルは試しません。"
+          if ! grep -Eqi 'ServiceUnavailable|RateLimit|RATE_LIMITED|RESOURCE_EXHAUSTED|quota|Overloaded|APIConnection|Timeout|\b503\b|\b429\b' /tmp/attempt.log; then
+            echo "1回目の失敗は通信エラー・利用上限ではないため、予備モデルは試しません。"
             exit 1
           fi
           FB_KEY="${LLM_API_KEY_FALLBACK:-$LLM_API_KEY}"
