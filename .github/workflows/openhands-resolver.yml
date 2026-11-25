@@ -5,9 +5,13 @@ name: Resolve Issue with OpenHands
 # 成功したらPRを作らず、変更を直接 main に反映し、Issue に作業のまとめを書き込みます。
 # 失敗したら main には触れず、試した内容をブランチに残します。
 # AIが何も変更しなかったときも、その状況をIssueに書き込みます。
-# OpenHands 0.62.0 (2025-11) のリゾルバを固定して使います。
-# 503(混雑)などでAIとの通信が失敗したら、変数 LLM_MODEL_FALLBACK のモデルで自動的にやり直します。
-# LLM_MODEL_FALLBACK はカンマ区切りで複数指定できます(例: gemini/モデルA,gemini/モデルB)。
+# OpenHands 0.62.0 のリゾルバを固定して使います。
+#
+# 【予備モデル】
+# 503(混雑)・429(上限)など通信系の失敗のときだけ、変数 LLM_MODEL_FALLBACK のモデルで
+# 自動的にやり直します。カンマ区切りで複数指定できます(例: groq/モデルA,openrouter/モデルB)。
+# 予備モデルが別の会社のものなら、Secrets に LLM_API_KEY_FALLBACK を作ってそのキーを入れます。
+# (未設定なら LLM_API_KEY を使います。予備モデルは全部同じ会社のものにしてください)
 
 on:
   issues:
@@ -90,6 +94,7 @@ jobs:
       - name: Attempt to resolve issue
         id: attempt
         continue-on-error: true
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_USERNAME: openhands-agent
@@ -97,30 +102,41 @@ jobs:
           SANDBOX_ENV_GITHUB_TOKEN: ${{ github.token }}
           PYTHONPATH: ""
         run: |
-          cd /tmp && python -m openhands.resolver.resolve_issue \
+          # ログを /tmp/attempt.log にも残します(予備モデルを使うか決めるため)。
+          cd /tmp
+          python -m openhands.resolver.resolve_issue \
             --selected-repo "${{ github.repository }}" \
             --issue-number "$ISSUE_NUMBER" \
             --issue-type issue \
             --max-iterations "$MAX_ITERATIONS" \
             --comment-id "$COMMENT_ID" \
-            --is-experimental false
+            --is-experimental false 2>&1 | tee /tmp/attempt.log
 
-      # 1回目が通信エラーなどで失敗したときだけ、予備のモデルを順に試します。
+      # 1回目が「通信エラー」で失敗したときだけ、予備のモデルを順に試します。
+      # (通信以外の失敗は、モデルを替えても直らないので試しません)
       - name: Retry with fallback models
         id: fallback
         if: steps.attempt.outcome == 'failure' && vars.LLM_MODEL_FALLBACK != ''
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_USERNAME: openhands-agent
           GIT_USERNAME: openhands-agent
           SANDBOX_ENV_GITHUB_TOKEN: ${{ github.token }}
+          LLM_API_KEY_FALLBACK: ${{ secrets.LLM_API_KEY_FALLBACK }}
           PYTHONPATH: ""
         run: |
           cd /tmp
+          if ! grep -Eqi 'ServiceUnavailable|RateLimit|Overloaded|APIConnection|Timeout|\b503\b|\b429\b' /tmp/attempt.log; then
+            echo "1回目の失敗は通信エラーではないため、予備モデルは試しません。"
+            exit 1
+          fi
+          FB_KEY="${LLM_API_KEY_FALLBACK:-$LLM_API_KEY}"
           for M in $(echo "$LLM_MODEL_FALLBACK" | tr ',' ' '); do
             echo "Trying fallback model: $M"
-            rm -rf /tmp/output
-            if LLM_MODEL="$M" python -m openhands.resolver.resolve_issue \
+            # OpenHands のコンテナが作ったファイルは root 所有なので sudo が必要です。
+            sudo rm -rf /tmp/output
+            if LLM_MODEL="$M" LLM_API_KEY="$FB_KEY" python -m openhands.resolver.resolve_issue \
               --selected-repo "${{ github.repository }}" \
               --issue-number "$ISSUE_NUMBER" \
               --issue-type issue \
@@ -138,11 +154,17 @@ jobs:
         id: check_result
         if: always()
         run: |
-          if cd /tmp && grep -q '"success":true' output/output.jsonl; then
-            echo "RESOLUTION_SUCCESS=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "RESOLUTION_SUCCESS=false" >> "$GITHUB_OUTPUT"
-          fi
+          python3 - <<'PY'
+          import json, os
+          ok = False
+          try:
+              line = next(l for l in open('/tmp/output/output.jsonl', encoding='utf-8') if l.strip())
+              ok = bool(json.loads(line).get('success'))
+          except Exception:
+              pass
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('RESOLUTION_SUCCESS=%s\n' % ('true' if ok else 'false'))
+          PY
 
       # AIの作業結果を読み取り、ログとIssueのコメント用に要点を残します。
       - name: Summarize output
@@ -153,7 +175,8 @@ jobs:
           import json, os
           out = '/tmp/output/output.jsonl'
           res = {'has_patch': False, 'success': False, 'patch_len': 0, 'events': 0,
-                 'explanation': '', 'error': '', 'last_agent': '', 'answer': ''}
+                 'explanation': '', 'error': '', 'last_agent': '', 'answer': '',
+                 'no_output': False}
           try:
               line = next(l for l in open(out, encoding='utf-8') if l.strip())
               d = json.loads(line)
@@ -172,10 +195,13 @@ jobs:
                           res['last_agent'] = msg.strip()[:800]
                           break
               # AIの最終的な回答(質問への答え)を取り出します。
+              # source が agent のものだけを見ます(user の依頼文を拾わないため)。
               for ev in reversed(hist):
+                  if ev.get('source') != 'agent':
+                      continue
                   if ev.get('action') == 'finish':
                       text = (ev.get('final_thought') or (ev.get('args') or {}).get('final_thought') or '').strip()
-                  elif ev.get('action') == 'message' and ev.get('source') != 'user':
+                  elif ev.get('action') == 'message':
                       text = (ev.get('content') or (ev.get('args') or {}).get('content') or '').strip()
                   else:
                       continue
@@ -183,6 +209,7 @@ jobs:
                       res['answer'] = text[:3000]
                       break
           except Exception as e:
+              res['no_output'] = True
               res['error'] = 'output.jsonl を読めませんでした: %s' % e
           json.dump(res, open('/tmp/summary.json', 'w', encoding='utf-8'), ensure_ascii=False)
           print(json.dumps(res, ensure_ascii=False, indent=2))
@@ -210,6 +237,8 @@ jobs:
           PYTHONPATH: ""
         run: |
           cd /tmp
+          # コンテナが作ったファイルの所有者が違っても git が止まらないようにします。
+          git config --global --add safe.directory '*'
           # リゾルバの記録は標準エラーに出るため、2>&1 で取り込みます。
           python -m openhands.resolver.send_pull_request \
             --issue-number "$ISSUE_NUMBER" \
@@ -223,7 +252,9 @@ jobs:
             echo "$BRANCH" > branch_name.txt
           fi
           if [ -z "$BRANCH" ]; then
-            echo "Branch was not created."; exit 1
+            echo "Branch was not created."
+            echo "(.github/workflows のファイルを含む変更は、GITHUB_TOKEN では送れないことがあります)"
+            exit 1
           fi
           echo "Branch: $BRANCH"
 
@@ -320,6 +351,15 @@ jobs:
                 diag,
                 `ログ: ${runUrl}`,
               ].join('\n') + details;
+            } else if (sm.no_output) {
+              // AIとの通信失敗などで、結果ファイル自体ができなかったとき
+              body = [
+                `## 作業のまとめ`,
+                `AIとの通信がうまくいかず(混雑・利用上限など)、作業を終えられませんでした。${target} は変更していません。`,
+                `時間をおいて、ラベルを付け直すか、もう一度コメントしてください。`,
+                ``,
+                `ログ: ${runUrl}`,
+              ].join('\n');
             } else if (sm.answer && sm.has_patch === false) {
               // ファイルの変更がなく、AIの回答があるとき(質問への回答)
               body = [
