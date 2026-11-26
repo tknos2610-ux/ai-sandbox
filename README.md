@@ -6,7 +6,7 @@ JANコードをカメラで読んで入庫・出庫を記録する、スマホ�
 ## 公開手順(GitHub Pages)
 1. GitHubで新しいリポジトリを作る(Publicで可。例: `stock`)
 2. このzipを展開して、中のファイルをすべてリポジトリ直下にアップロードする
-   - index.html / app.js / sw.js / manifest.webmanifest / icon-180.png / icon-192.png / icon-512.png
+   - stock.html / stock.js / stock-sw.js / stock.webmanifest / stock-icon-180.png / stock-icon-192.png / stock-icon-512.png
 3. リポジトリの Settings → Pages → Branch を `main` / `(root)` にして Save
 4. 数分後に `https://<ユーザー名>.github.io/<リポジトリ名>/` で開ける
 

@@ -309,7 +309,274 @@ async function startCam() {
       scanning = true;
       detTimer = setInterval(async () => {
         if (busy || video.readyState < 2) return;
-        busy = true
+        busy = true;
+        try { const r = await det.detect(video); if (r.length) onCode(r[0].rawValue); } catch { /* ignore */ }
+        busy = false;
+      }, 200);
+    } else {
+      await loadZX();
+      const Z = window.ZXing;
+      const hints = new Map();
+      hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A]);
+      hints.set(Z.DecodeHintType.TRY_HARDER, true);
+      zxReader = new Z.BrowserMultiFormatReader(hints, 250);
+      scanning = true;
+      zxCtl = await zxReader.decodeFromConstraints(camConstraints, video, (result) => { if (result) onCode(result.getText()); });
+    }
+    try { wl = await navigator.wakeLock?.request('screen'); } catch { /* ignore */ }
+    setCamUI();
+  } catch (e) {
+    stopCam();
+    const msg = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')
+      ? 'カメラが許可されていません。ブラウザ/端末の設定でカメラを許可してください'
+      : (e && e.message) || 'カメラを起動できませんでした';
+    setCamUI(msg);
+    $('#camMsg').hidden = false;
+  }
+}
+function stopCam() {
+  clearInterval(detTimer); detTimer = null;
+  try { zxCtl?.stop?.(); } catch { /* ignore */ }
+  try { zxReader?.reset?.(); } catch { /* ignore */ }
+  zxCtl = null; zxReader = null;
+  try { video.srcObject?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+  video.srcObject = null;
+  try { wl?.release(); } catch { /* ignore */ }
+  wl = null;
+  const was = scanning;
+  scanning = false;
+  if (was || $('#camMsg').textContent) setCamUI('カメラは停止中');
+  $('#camMsg').hidden = false;
+}
+
+/* ---------- スキャン画面 ---------- */
+function setMode(m) {
+  state.mode = m;
+  lsSet('mode', m);
+  document.body.dataset.mode = m;
+  $$('#modeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === m));
+  $('#camTag').textContent = m === 'in' ? '入庫' : '出庫';
+}
+function updateQty() { $('#qty').textContent = state.qty; }
+function refreshLocSel() {
+  $('#locSel').innerHTML = state.locs.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join('');
+  $('#locSel').value = String(state.locId);
+}
+function updateBanner() {
+  const b = $('#bkBanner');
+  if (!state.moves.length) { b.hidden = true; return; }
+  const last = Number(lsGet('lastBackup')) || 0;
+  const first = state.moves.reduce((a, m) => Math.min(a, m.ts), Infinity);
+  const ref = last || first;
+  b.hidden = Date.now() - ref < 7 * DAY;
+  b.textContent = last
+    ? `最後のバックアップから${Math.floor((Date.now() - last) / DAY)}日たっています。タップして書き出し`
+    : 'まだバックアップがありません。タップして書き出し';
+}
+
+/* ---------- 在庫画面 ---------- */
+function renderStock() {
+  const v = $('#v-stock');
+  if (!v.dataset.built) {
+    v.dataset.built = '1';
+    v.innerHTML = `<h2>在庫</h2><input id="sq" type="search" placeholder="商品名・JANで検索"><div class="row"><select id="sloc"></select><label class="chk"><input type="checkbox" id="szero">在庫0も表示</label></div><div id="ssum" class="muted sm"></div><ul id="slist" class="list"></ul>`;
+    $('#sq').addEventListener('input', (e) => { state.q = e.target.value; refreshStock(); });
+    $('#sloc').addEventListener('change', (e) => { state.stockLoc = e.target.value; refreshStock(); });
+    $('#szero').addEventListener('change', (e) => { state.showZero = e.target.checked; refreshStock(); });
+    $('#slist').addEventListener('click', (e) => { const li = e.target.closest('[data-jan]'); if (li) showItem(li.dataset.jan); });
+  }
+  $('#sloc').innerHTML = '<option value="all">すべての倉庫</option>' + state.locs.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join('');
+  if (state.stockLoc !== 'all' && !state.locs.some((l) => String(l.id) === state.stockLoc)) state.stockLoc = 'all';
+  $('#sloc').value = state.stockLoc;
+  refreshStock();
+}
+function refreshStock() {
+  const q = state.q.trim().toLowerCase();
+  const lf = state.stockLoc;
+  const rows = [];
+  for (const it of state.items.values()) {
+    if (q && !(it.name.toLowerCase().includes(q) || it.jan.includes(q) || (it.memo || '').toLowerCase().includes(q))) continue;
+    const st = stockOf(it.jan);
+    const n = lf === 'all' ? totalOf(it.jan) : (st.get(Number(lf)) || 0);
+    if (n === 0 && !state.showZero) continue;
+    rows.push({ it, n, st });
+  }
+  rows.sort((a, b) => (state.lastTs.get(b.it.jan) || 0) - (state.lastTs.get(a.it.jan) || 0));
+  const kinds = rows.filter((r) => r.n > 0).length;
+  const sum = rows.reduce((a, r) => a + r.n, 0);
+  $('#ssum').textContent = `${kinds}商品 / 合計 ${sum}点`;
+  const LIMIT = 500;
+  $('#slist').innerHTML = rows.slice(0, LIMIT).map(({ it, n, st }) => {
+    const chips = lf === 'all'
+      ? [...st].filter(([, q2]) => q2 !== 0).map(([l, q2]) => `<span class="chip">${esc(locName(l))} ${q2}</span>`).join('')
+      : '';
+    return `<li class="item" data-jan="${esc(it.jan)}"><div class="grow"><div class="nm">${esc(it.name)}</div><div class="muted sm">JAN ${esc(it.jan)}${it.memo ? ' ・ ' + esc(it.memo) : ''}</div>${chips ? `<div class="chips">${chips}</div>` : ''}</div><div class="qty ${n < 0 ? 'neg' : ''}">${n}</div></li>`;
+  }).join('') + (rows.length > LIMIT ? `<li class="muted">${LIMIT}件まで表示しています。検索で絞り込んでください</li>` : '')
+    || '<li class="muted">該当する商品がありません</li>';
+}
+async function showItem(jan) {
+  const it = state.items.get(jan);
+  if (!it) return;
+  const st = [...stockOf(jan)].filter(([, q]) => q !== 0);
+  const hist = state.moves.filter((m) => m.jan === jan).sort((a, b) => b.ts - a.ts).slice(0, 50);
+  const body = `<label>商品名<input data-k="name" value="${esc(it.name)}"></label>
+    <label>メモ<input data-k="memo" value="${esc(it.memo || '')}"></label>
+    <div class="muted sm">JAN ${esc(jan)}</div>
+    <div class="chips">${st.map(([l, q]) => `<span class="chip">${esc(locName(l))} ${q}</span>`).join('') || '<span class="muted">在庫なし</span>'}</div>
+    <h4>履歴(新しい順・最大50件)</h4>
+    <ul class="hist">${hist.map((m) => `<li><span class="${m.type === 'in' ? 'tag-in' : 'tag-out'}">${m.type === 'in' ? '入庫' : '出庫'}</span><span>${fmt(m.ts)} ${esc(locName(m.loc))} ×${m.qty}</span><button type="button" data-act="delmove" data-id="${m.id}">削除</button></li>`).join('') || '<li class="muted">履歴なし</li>'}</ul>`;
+  const r = await dialog({
+    title: '商品の詳細',
+    body,
+    buttons: [{ label: '保存', value: 'save', cls: 'primary' }, { label: '閉じる', value: null }, { label: '商品を削除', value: 'del', cls: 'danger' }],
+    onAct: (el, close) => { if (el.dataset.act === 'delmove') close({ value: 'delmove', id: Number(el.dataset.id), fields: {} }); },
+  });
+  if (r.value === 'save') {
+    it.name = r.fields.name || it.name;
+    it.memo = r.fields.memo || '';
+    await dbPut('items', it);
+    await reload();
+    renderStock();
+    toast('保存しました');
+  } else if (r.value === 'delmove') {
+    if (await confirmDlg('履歴を削除', 'この入出庫履歴を削除します。在庫数が変わります。', '削除')) {
+      await dbDel('moves', r.id);
+      await reload();
+      renderStock();
+      toast('削除しました');
+    }
+    showItem(jan);
+  } else if (r.value === 'del') {
+    if (await confirmDlg('商品を削除', `「${esc(it.name)}」と、その入出庫履歴をすべて削除します。`, '削除')) {
+      await dbDelMany('moves', state.moves.filter((m) => m.jan === jan).map((m) => m.id));
+      await dbDel('items', jan);
+      await reload();
+      renderStock();
+      toast('削除しました');
+    }
+  }
+}
+
+/* ---------- 倉庫画面 ---------- */
+function renderLocs() {
+  const tot = new Map();
+  for (const s of state.stock.values()) for (const [l, q] of s) tot.set(l, (tot.get(l) || 0) + q);
+  $('#v-locs').innerHTML = `<h2>倉庫</h2><ul class="list">${state.locs.map((l) => `<li><div class="grow"><div class="nm">${esc(l.name)}</div><div class="muted sm">在庫 ${tot.get(l.id) || 0}点</div></div><button type="button" data-act="rename" data-id="${l.id}">名前変更</button><button type="button" class="danger" data-act="del" data-id="${l.id}">削除</button></li>`).join('')}</ul>
+    <form id="locForm" class="row"><input id="locName" placeholder="新しい倉庫名" maxlength="30" autocomplete="off"><button type="submit" class="primary">追加</button></form>
+    <p class="muted sm">履歴のある倉庫は削除できません(名前変更をご利用ください)。</p>`;
+}
+async function locAction(act, id) {
+  const l = state.locs.find((x) => x.id === id);
+  if (!l) return;
+  if (act === 'rename') {
+    const r = await dialog({ title: '倉庫名の変更', body: `<label>倉庫名<input data-k="name" value="${esc(l.name)}" maxlength="30"></label>`, buttons: [{ label: '保存', value: 'ok', cls: 'primary' }, { label: 'キャンセル', value: null }] });
+    if (r.value === 'ok' && r.fields.name) { l.name = r.fields.name; await dbPut('locations', l); await reload(); refreshLocSel(); renderLocs(); }
+  } else {
+    if (state.locs.length <= 1) { toast('最後の倉庫は削除できません', true); return; }
+    if (state.moves.some((m) => m.loc === id)) { toast('履歴があるため削除できません', true); return; }
+    if (await confirmDlg('倉庫を削除', `「${esc(l.name)}」を削除します。`, '削除')) { await dbDel('locations', id); await reload(); refreshLocSel(); renderLocs(); }
+  }
+}
+
+/* ---------- 設定・バックアップ ---------- */
+let installEvt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; if (state.tab === 'settings') renderSettings(); });
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+function buildBackup() {
+  return JSON.stringify({ app: 'sedori-stock', version: 1, exportedAt: new Date().toISOString(), items: [...state.items.values()], locations: state.locs, moves: state.moves });
+}
+const csvCell = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+function buildMovesCsv() {
+  const rows = [['日時', '種別', 'JAN', '商品名', '倉庫', '数量']];
+  [...state.moves].sort((a, b) => a.ts - b.ts).forEach((m) => rows.push([fmt(m.ts), m.type === 'in' ? '入庫' : '出庫', m.jan, state.items.get(m.jan)?.name, locName(m.loc), m.qty]));
+  return '\ufeff' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+}
+function buildStockCsv() {
+  const rows = [['JAN', '商品名', '倉庫', '在庫数']];
+  for (const it of state.items.values()) for (const [l, q] of stockOf(it.jan)) if (q !== 0) rows.push([it.jan, it.name, locName(l), q]);
+  return '\ufeff' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
+}
+async function saveFile(name, mime, text) {
+  const blob = new Blob([text], { type: mime });
+  try {
+    const file = new File([blob], name, { type: mime });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: name });
+      return true;
+    }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return false;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  return true;
+}
+const stamp = () => { const d = new Date(); return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}`; };
+async function importJSON(file) {
+  let d;
+  try { d = JSON.parse(await file.text()); } catch { toast('ファイルを読めません', true); return; }
+  if (d?.app !== 'sedori-stock' || !Array.isArray(d.items) || !Array.isArray(d.locations) || !Array.isArray(d.moves)) { toast('このアプリのバックアップではありません', true); return; }
+  if (!(await confirmDlg('バックアップを読み込む', `現在のデータをすべて置き換えます。(商品${d.items.length}件・履歴${d.moves.length}件)`, '置き換える'))) return;
+  if (!d.locations.length) d.locations.push({ id: 1, name: '倉庫1' });
+  await dbReplaceAll(d);
+  await reload();
+  refreshLocSel(); renderSettings(); updateBanner();
+  state.log = []; renderLog(); $('#last').hidden = true;
+  toast('読み込みました');
+}
+function renderSettings() {
+  const v = $('#v-settings');
+  const last = Number(lsGet('lastBackup')) || 0;
+  const guide = isStandalone() ? 'ホーム画面から起動中です。' : (installEvt ? '' : 'iPhone: 共有ボタン →「ホーム画面に追加」 / Android: ブラウザのメニュー →「アプリをインストール」');
+  v.innerHTML = `<h2>設定</h2>
+    <div class="set"><h4>バックアップ</h4>
+      <div class="muted sm">最終: ${last ? fmt(last) : 'なし'} ・ データはこの端末内にのみ保存されます</div>
+      <button type="button" data-do="export-json" class="primary">JSONで書き出し</button>
+      <button type="button" data-do="import-json">JSONを読み込み</button>
+      <button type="button" data-do="export-moves">履歴CSV</button>
+      <button type="button" data-do="export-stock">在庫CSV</button>
+      <input type="file" id="importFile" accept="application/json,.json" hidden>
+    </div>
+    <div class="set"><h4>動作</h4>
+      <label class="chk"><input type="checkbox" data-opt="allowNeg" ${lsGet('allowNeg') === '1' ? 'checked' : ''}>在庫0でも出庫を許可する(マイナス在庫)</label>
+      <label class="chk"><input type="checkbox" data-opt="sound" ${lsGet('sound') !== '0' ? 'checked' : ''}>読み取り音を鳴らす</label>
+    </div>
+    <div class="set"><h4>アプリ</h4>
+      ${installEvt ? '<button type="button" data-do="install" class="primary">アプリをインストール</button>' : ''}
+      ${guide ? `<div class="muted sm">${esc(guide)}</div>` : ''}
+      <div class="muted sm">データ保護: <span id="persistState">確認中…</span></div>
+      <div class="muted sm">バージョン ${VERSION}</div>
+    </div>
+    <div class="set"><button type="button" class="danger" data-do="wipe">全データを削除</button></div>`;
+  navigator.storage?.persisted?.().then((p) => { const e = $('#persistState'); if (e) e.textContent = p ? '保護されています' : '未保護(定期的にバックアップしてください)'; }).catch(() => {});
+}
+async function settingsDo(act) {
+  if (act === 'export-json') { if (await saveFile(`sedori-stock-${stamp()}.json`, 'application/json', buildBackup())) { lsSet('lastBackup', String(Date.now())); renderSettings(); updateBanner(); } }
+  else if (act === 'export-moves') await saveFile(`moves-${stamp()}.csv`, 'text/csv', buildMovesCsv());
+  else if (act === 'export-stock') await saveFile(`stock-${stamp()}.csv`, 'text/csv', buildStockCsv());
+  else if (act === 'import-json') $('#importFile').click();
+  else if (act === 'install' && installEvt) { installEvt.prompt(); installEvt = null; renderSettings(); }
+  else if (act === 'wipe') {
+    if (await confirmDlg('全データを削除', '商品・倉庫・履歴をすべて削除します。元に戻せません。先にバックアップを書き出してください。', '削除する')) {
+      await dbReplaceAll({ items: [], locations: [{ id: 1, name: '倉庫1' }], moves: [] });
+      await reload(); refreshLocSel(); state.log = []; renderLog(); $('#last').hidden = true; renderSettings(); updateBanner();
+      toast('削除しました');
+    }
+  }
+}
+
+/* ---------- タブ ---------- */
+function showTab(t) {
+  state.tab = t;
+  if (t !== 'scan') stopCam();
+  ['scan', 'stock', 'locs', 'settings'].forEach((n) => { $('#v-' + n).hidden = n !== t; });
+  $$('#tabs button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.tab === t)));
+  if (t === 'stock') renderStock();
   if (t === 'locs') renderLocs();
   if (t === 'settings') renderSettings();
   if (t === 'scan') { refreshLocSel(); updateBanner(); }
@@ -370,7 +637,7 @@ async function init() {
   showTab('scan');
   setCamUI('カメラは停止中');
   try { navigator.storage?.persist?.()?.catch(() => {}); } catch { /* ignore */ }
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('stock-sw.js', { scope: './stock.html' }).catch(() => {});
   if (!('BarcodeDetector' in window)) loadZX().catch(() => {});
 }
 init().catch((e) => { document.body.innerHTML = `<p style="padding:20px">起動に失敗しました: ${esc(e.message || e)}</p>`; });
