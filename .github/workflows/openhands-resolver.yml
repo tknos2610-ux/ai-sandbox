@@ -213,18 +213,28 @@ jobs:
                           break
               # AIの最終的な回答(質問への答え)を取り出します。
               # source が agent のものだけを見ます(user の依頼文を拾わないため)。
+              # 1) finish(AIの完了報告)は必ずAIの発言なので、source を見ずに最優先で探します。
+              # 2) なければ message のうち、依頼文(user)ではないものを探します。
+              def is_user(ev):
+                  src = str(ev.get('source') or '').lower()
+                  txt = (ev.get('content') or ev.get('message') or (ev.get('args') or {}).get('content') or '')
+                  return src == 'user' or str(txt).startswith('Please fix the following issue')
               for ev in reversed(hist):
-                  if ev.get('source') != 'agent':
-                      continue
                   if ev.get('action') == 'finish':
-                      text = (ev.get('final_thought') or (ev.get('args') or {}).get('final_thought') or '').strip()
-                  elif ev.get('action') == 'message':
-                      text = (ev.get('content') or (ev.get('args') or {}).get('content') or '').strip()
-                  else:
-                      continue
-                  if text:
-                      res['answer'] = text[:3000]
-                      break
+                      a = ev.get('args') or {}
+                      text = str(ev.get('final_thought') or a.get('final_thought') or a.get('thought') or '').strip()
+                      if text:
+                          res['answer'] = text[:3000]
+                          break
+              if not res['answer']:
+                  for ev in reversed(hist):
+                      if ev.get('action') == 'message' and not is_user(ev):
+                          text = str(ev.get('content') or (ev.get('args') or {}).get('content') or '').strip()
+                          if text:
+                              res['answer'] = text[:3000]
+                              break
+              # 原因調査用: 最後の3件の種類をログに出します。
+              print('DEBUG last events:', [(e.get('action'), e.get('source')) for e in hist[-3:]])
           except Exception as e:
               res['no_output'] = True
               res['error'] = 'output.jsonl を読めませんでした: %s' % e
