@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 const ZX_URL = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
 
 /* ---------- ユーティリティ ---------- */
@@ -267,7 +267,7 @@ function onCode(raw) {
 }
 
 /* ---------- カメラ ---------- */
-let scanning = false, detTimer = null, zxReader = null, zxCtl = null, wl = null, zxP = null;
+let scanning = false, detTimer = null, wl = null, zxP = null;
 const video = $('#video');
 function loadZX() {
   if (window.ZXing) return Promise.resolve();
@@ -281,7 +281,45 @@ function loadZX() {
   });
   return zxP;
 }
-const camConstraints = { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false };
+const camConstraints = { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false };
+
+// ZXing(iPhone用)の読み取り。
+// ライブラリ付属の「映像から連続読み取り」(BrowserMultiFormatReader.decodeFromConstraints)は、
+// フレームを1枚おきに白黒反転して読む仕組みと、TRY_HARDER の回転読み取りが干渉して、
+// 横向きのバーコードが毎回「反転した画像」で読まれてしまい、ほぼ読めなくなる不具合がある。
+// そのため映像の取り込みはアプリ側で行い、反転なしの画像をデコーダーに直接渡す。
+function makeZxScanner() {
+  const Z = window.ZXing;
+  const hints = new Map();
+  hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A]);
+  hints.set(Z.DecodeHintType.TRY_HARDER, true);
+  const reader = new Z.MultiFormatReader();
+  reader.setHints(hints);
+  const cv = document.createElement('canvas');
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  let n = 0;
+  return () => {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return null;
+    // 偶数回: 画面中央(読み取り枠のあたり)を切り出して読む / 奇数回: 映像全体を読む
+    const crop = n++ % 2 === 0;
+    const sw = crop ? Math.round(vw * 0.9) : vw;
+    const sh = crop ? Math.round(vh * 0.6) : vh;
+    const sx = Math.round((vw - sw) / 2), sy = Math.round((vh - sh) / 2);
+    const k = Math.min(1, 1600 / Math.max(sw, sh)); // 大きすぎる映像は縮小して処理を軽くする
+    const dw = Math.round(sw * k), dh = Math.round(sh * k);
+    if (cv.width !== dw || cv.height !== dh) { cv.width = dw; cv.height = dh; }
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, dw, dh);
+    try {
+      const bmp = new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(cv)));
+      return reader.decodeWithState(bmp).getText();
+    } catch {
+      return null; // 見つからない・読み取り失敗は次のフレームで再挑戦
+    } finally {
+      try { reader.reset(); } catch { /* ignore */ }
+    }
+  };
+}
 function setCamUI(msg) {
   $('#camMsg').hidden = scanning && !msg;
   if (msg) $('#camMsg').textContent = msg;
@@ -300,29 +338,26 @@ async function startCam() {
     if ('BarcodeDetector' in window) {
       try { native = (await BarcodeDetector.getSupportedFormats()).includes('ean_13'); } catch { native = false; }
     }
+    let detect;
     if (native) {
-      const stream = await navigator.mediaDevices.getUserMedia(camConstraints);
-      video.srcObject = stream;
-      await video.play();
       const det = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a'] });
-      let busy = false;
-      scanning = true;
-      detTimer = setInterval(async () => {
-        if (busy || video.readyState < 2) return;
-        busy = true;
-        try { const r = await det.detect(video); if (r.length) onCode(r[0].rawValue); } catch { /* ignore */ }
-        busy = false;
-      }, 200);
+      detect = async () => { const r = await det.detect(video); return r.length ? r[0].rawValue : null; };
     } else {
       await loadZX();
-      const Z = window.ZXing;
-      const hints = new Map();
-      hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A]);
-      hints.set(Z.DecodeHintType.TRY_HARDER, true);
-      zxReader = new Z.BrowserMultiFormatReader(hints, 250);
-      scanning = true;
-      zxCtl = await zxReader.decodeFromConstraints(camConstraints, video, (result) => { if (result) onCode(result.getText()); });
+      const zx = makeZxScanner();
+      detect = async () => zx();
     }
+    const stream = await navigator.mediaDevices.getUserMedia(camConstraints);
+    video.srcObject = stream;
+    await video.play();
+    scanning = true;
+    let busy = false;
+    detTimer = setInterval(async () => {
+      if (busy || !scanning || video.readyState < 2) return;
+      busy = true;
+      try { const code = await detect(); if (code && scanning) onCode(code); } catch { /* ignore */ }
+      busy = false;
+    }, native ? 200 : 120);
     try { wl = await navigator.wakeLock?.request('screen'); } catch { /* ignore */ }
     setCamUI();
   } catch (e) {
@@ -336,9 +371,6 @@ async function startCam() {
 }
 function stopCam() {
   clearInterval(detTimer); detTimer = null;
-  try { zxCtl?.stop?.(); } catch { /* ignore */ }
-  try { zxReader?.reset?.(); } catch { /* ignore */ }
-  zxCtl = null; zxReader = null;
   try { video.srcObject?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
   video.srcObject = null;
   try { wl?.release(); } catch { /* ignore */ }

@@ -1,5 +1,5 @@
 /* 在庫管理アプリ専用のService Worker(他のアプリのsw.jsとは別。scopeは stock.html のみ) */
-const VER = 'sedori-stock-v1.0.1';
+const VER = 'sedori-stock-v1.0.2';
 const ASSETS = ['stock.html', 'stock.js', 'stock.webmanifest', 'stock-icon-180.png', 'stock-icon-192.png', 'stock-icon-512.png'];
 const ZX = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
 
