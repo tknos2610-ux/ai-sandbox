@@ -6,7 +6,7 @@ JANコードをカメラで読んで入庫・出庫を記録する、スマホ�
 ## 公開手順(GitHub Pages)
 1. GitHubで新しいリポジトリを作る(Publicで可。例: `stock`)
 2. このzipを展開して、中のファイルをすべてリポジトリ直下にアップロードする
-   - stock.html / stock.js / stock-sw.js / stock.webmanifest / stock-icon-180.png / stock-icon-192.png / stock-icon-512.png
+   - stock.html / stock.js / stock-version.js / stock-sw.js / stock.webmanifest / stock-icon-180.png / stock-icon-192.png / stock-icon-512.png
 3. リポジトリの Settings → Pages → Branch を `main` / `(root)` にして Save
 4. 数分後に `https://<ユーザー名>.github.io/<リポジトリ名>/` で開ける
 
@@ -31,3 +31,9 @@ JANコードをカメラで読んで入庫・出庫を記録する、スマホ�
 - 出庫時に選択中の倉庫に在庫が足りない場合、在庫のある倉庫を選ぶ画面が出る
 - 書籍の2段目バーコード(191/192始まり)は自動で無視
 - バーコードの読取: Android(Chrome)は標準機能、iPhoneは ZXing(CDNから取得し、以後キャッシュ)
+
+## バージョン管理(設定画面 →「バージョン」)
+- 使用中のバージョン、「最新バージョンを確認」「更新する」、「前のバージョンに戻す」「最新バージョンに戻す」がある
+- 端末には「今のバージョン」と「1つ前のバージョン」の2つを保存しているので、戻すのはオフラインでもできる(データはそのまま)
+- アプリが開けなくなったら、アドレスの最後に `?rollback`(前の版)/ `?latest`(最新版)を付けて開く
+- **更新を公開するときは、`stock-version.js` の `version` を必ず上げる**(例: 1.1.0 → 1.1.1)。ここが変わらないと端末側は更新に気づかない。`notes` に変更内容を書くと確認画面に表示される

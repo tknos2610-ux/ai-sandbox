@@ -1,6 +1,7 @@
 'use strict';
 (() => {
-const VERSION = '1.0.1';
+const VINFO = self.STOCK_VERSION || { version: '?', date: '', notes: '' }; // stock-version.js で定義
+const VERSION = VINFO.version;
 const ZX_URL = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
 
 /* ---------- ユーティリティ ---------- */
@@ -582,9 +583,18 @@ function renderSettings() {
       ${installEvt ? '<button type="button" data-do="install" class="primary">アプリをインストール</button>' : ''}
       ${guide ? `<div class="muted sm">${esc(guide)}</div>` : ''}
       <div class="muted sm">データ保護: <span id="persistState">確認中…</span></div>
-      <div class="muted sm">バージョン ${VERSION}</div>
+    </div>
+    <div class="set" id="verBox"><h4>バージョン</h4>
+      <div>使用中: <b>v${esc(VERSION)}</b> <span class="muted sm">${esc(VINFO.date)}</span></div>
+      ${VINFO.notes ? `<div class="muted sm">${esc(VINFO.notes)}</div>` : ''}
+      <div class="muted sm" id="verState">確認中…</div>
+      <div id="verRemote" class="sm" hidden></div>
+      <button type="button" data-do="ver-check" class="primary">最新バージョンを確認</button>
+      <span id="verBtns"></span>
+      <div class="muted sm">アプリが開けなくなったときは、アドレスの最後に <code>?rollback</code>(前の版)/ <code>?latest</code>(最新版)を付けて開くと切り替わります。</div>
     </div>
     <div class="set"><button type="button" class="danger" data-do="wipe">全データを削除</button></div>`;
+  refreshVerState();
   navigator.storage?.persisted?.().then((p) => { const e = $('#persistState'); if (e) e.textContent = p ? '保護されています' : '未保護(定期的にバックアップしてください)'; }).catch(() => {});
 }
 async function settingsDo(act) {
@@ -592,6 +602,10 @@ async function settingsDo(act) {
   else if (act === 'export-moves') await saveFile(`moves-${stamp()}.csv`, 'text/csv', buildMovesCsv());
   else if (act === 'export-stock') await saveFile(`stock-${stamp()}.csv`, 'text/csv', buildStockCsv());
   else if (act === 'import-json') $('#importFile').click();
+  else if (act === 'ver-check') await checkLatest();
+  else if (act === 'ver-update') await applyUpdate();
+  else if (act === 'ver-rollback') await rollback();
+  else if (act === 'ver-latest') await backToLatest();
   else if (act === 'install' && installEvt) { installEvt.prompt(); installEvt = null; renderSettings(); }
   else if (act === 'wipe') {
     if (await confirmDlg('全データを削除', '商品・倉庫・履歴をすべて削除します。元に戻せません。先にバックアップを書き出してください。', '削除する')) {
@@ -600,6 +614,102 @@ async function settingsDo(act) {
       toast('削除しました');
     }
   }
+}
+
+/* ---------- バージョン管理 ---------- */
+// Service Worker(stock-sw.js)に問い合わせる。返事: { installed, previous, pinned }
+function swMsg(type) {
+  return new Promise((res) => {
+    const sw = navigator.serviceWorker?.controller;
+    if (!sw) { res(null); return; }
+    const ch = new MessageChannel();
+    const t = setTimeout(() => res(null), 3000);
+    ch.port1.onmessage = (e) => { clearTimeout(t); res(e.data); };
+    sw.postMessage({ type }, [ch.port2]);
+  });
+}
+const swReg = () => navigator.serviceWorker?.getRegistration('./stock.html') ?? Promise.resolve(null);
+async function refreshVerState() {
+  const st = $('#verState'), btns = $('#verBtns');
+  if (!st) return;
+  const i = await swMsg('info');
+  if (!$('#verState')) return;
+  if (!i || i.error) {
+    st.textContent = 'オフライン用の保存がまだありません(一度オンラインで開き直すと準備されます)';
+    btns.innerHTML = '';
+    return;
+  }
+  const lines = [];
+  if (i.pinned) lines.push(`前のバージョン v${i.pinned} で固定中です(最新は v${i.installed})`);
+  else lines.push(i.installed !== VERSION ? `端末には v${i.installed} が入っています。アプリを開き直すと切り替わります` : 'この端末に保存済み(オフラインでも起動できます)');
+  if (!i.pinned) lines.push(i.previous ? `戻せる前のバージョン: v${i.previous}` : '戻せる前のバージョン: まだありません(次の更新から使えます)');
+  st.innerHTML = lines.map(esc).join('<br>');
+  btns.innerHTML = i.pinned
+    ? '<button type="button" data-do="ver-latest" class="primary">最新バージョンに戻す</button>'
+    : (i.previous ? `<button type="button" data-do="ver-rollback">前のバージョン(v${esc(i.previous)})に戻す</button>` : '');
+}
+async function fetchLatestInfo() {
+  const r = await fetch(`stock-version.js?nocache=${Date.now()}`, { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const m = (await r.text()).match(/STOCK_VERSION\s*=\s*(\{[\s\S]*\})/);
+  return JSON.parse(m[1]);
+}
+const verNum = (v) => String(v).split('.').map((n) => parseInt(n, 10) || 0);
+const verCmp = (a, b) => { const x = verNum(a), y = verNum(b); for (let k = 0; k < Math.max(x.length, y.length); k++) { const d = (x[k] || 0) - (y[k] || 0); if (d) return d; } return 0; };
+async function checkLatest() {
+  const box = $('#verRemote');
+  box.hidden = false;
+  box.textContent = '確認中…';
+  let info;
+  try { info = await fetchLatestInfo(); } catch { box.textContent = 'サーバーに接続できませんでした(オフラインかもしれません)'; return; }
+  const i = await swMsg('info');
+  if (verCmp(info.version, VERSION) > 0) {
+    box.innerHTML = `<b>新しいバージョン v${esc(info.version)} があります</b>(${esc(info.date || '')})<br><span class="muted">${esc(info.notes || '')}</span><br><button type="button" data-do="ver-update" class="primary">更新する</button>`;
+  } else if (i?.pinned) {
+    box.innerHTML = `最新は v${esc(info.version)} です。いまは前のバージョンで固定中です。`;
+  } else {
+    box.textContent = `最新バージョン(v${info.version})を使っています`;
+  }
+}
+async function applyUpdate() {
+  const box = $('#verRemote');
+  box.textContent = '更新しています…';
+  stopCam();
+  try {
+    await swMsg('unpin');
+    const reg = await swReg();
+    if (!reg) { location.reload(); return; }
+    await reg.update();
+    const sw = reg.installing || reg.waiting;
+    if (sw) {
+      await new Promise((res, rej) => {
+        if (sw.state === 'activated') { res(); return; }
+        sw.addEventListener('statechange', () => { if (sw.state === 'activated') res(); if (sw.state === 'redundant') rej(new Error('更新に失敗しました')); });
+      });
+      location.reload();
+      return;
+    }
+    const i = await swMsg('info');
+    const latest = await fetchLatestInfo().catch(() => null);
+    if (i && latest && verCmp(i.installed, latest.version) >= 0) { location.reload(); return; }
+    box.textContent = 'サーバー側の反映待ちのようです。数分おいてからもう一度お試しください';
+  } catch (e) {
+    box.textContent = '更新できませんでした: ' + (e.message || e);
+  }
+}
+async function rollback() {
+  const i = await swMsg('info');
+  if (!i?.previous) { toast('戻せる前のバージョンがありません', true); return; }
+  if (!(await confirmDlg('前のバージョンに戻す', `v${esc(i.previous)} に戻します。商品・倉庫・履歴のデータはそのまま残ります。あとから「最新バージョンに戻す」で元に戻せます。`, '戻す', false))) return;
+  stopCam();
+  const r = await swMsg('pin-previous');
+  if (!r?.pinned) { toast('切り替えできませんでした', true); return; }
+  location.reload();
+}
+async function backToLatest() {
+  stopCam();
+  await swMsg('unpin');
+  location.reload();
 }
 
 /* ---------- タブ ---------- */
@@ -669,7 +779,7 @@ async function init() {
   showTab('scan');
   setCamUI('カメラは停止中');
   try { navigator.storage?.persist?.()?.catch(() => {}); } catch { /* ignore */ }
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('stock-sw.js', { scope: './stock.html' }).catch(() => {});
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('stock-sw.js', { scope: './stock.html', updateViaCache: 'none' }).catch(() => {});
   if (!('BarcodeDetector' in window)) loadZX().catch(() => {});
 }
 init().catch((e) => { document.body.innerHTML = `<p style="padding:20px">起動に失敗しました: ${esc(e.message || e)}</p>`; });
