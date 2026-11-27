@@ -1,7 +1,9 @@
 'use strict';
 (() => {
-const VINFO = self.STOCK_VERSION || { version: '?', date: '', notes: '' }; // stock-version.js で定義
+const VINFO = self.STOCK_VERSION || { version: '?', notes: '' }; // stock-version.js で定義
 const VERSION = VINFO.version;
+// バージョンは日付(例: 2026.11.27 / 同じ日の2回目は 2026.11.27.2)。表示は「2026-11-27」「2026-11-27 (2)」
+const verLabel = (v) => { const a = String(v || '?').split('.'); return a.length >= 3 ? `${a[0]}-${a[1].padStart(2, '0')}-${a[2].padStart(2, '0')}${a[3] ? ` (${a[3]})` : ''}` : 'v' + v; };
 const ZX_URL = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
 
 /* ---------- ユーティリティ ---------- */
@@ -182,12 +184,14 @@ function showLast(m) {
   box.className = 'card ' + m.type;
   box.innerHTML = `<div class="l1"><b>${m.type === 'in' ? '入庫' : '出庫'}</b> ${esc(it?.name)} <span>×${m.qty}</span></div>
     <div class="l2">${esc(locName(m.loc))}の在庫 ${stockOf(m.jan).get(m.loc) || 0} / 全体 ${totalOf(m.jan)}</div>
+    <div id="kxLine" class="kxline" data-jan="${esc(m.jan)}" hidden></div>
     <button type="button" data-undo="${m.id}">取り消し</button>`;
+  kxAttach(m.jan);
 }
 function renderLog() {
   $('#log').innerHTML = state.log.map((l) => {
     const it = state.items.get(l.jan);
-    return `<li class="${l.undone ? 'undone' : ''}"><span class="${l.type === 'in' ? 'tag-in' : 'tag-out'}">${l.type === 'in' ? '入庫' : '出庫'}</span><div class="grow"><div class="nm">${esc(it?.name || l.jan)}</div><div class="muted sm">${esc(locName(l.loc))} ・ ${fmt(l.ts)}</div></div><div class="qty">×${l.qty}</div></li>`;
+    return `<li class="${l.undone ? 'undone' : ''}" data-jan="${esc(l.jan)}"><span class="${l.type === 'in' ? 'tag-in' : 'tag-out'}">${l.type === 'in' ? '入庫' : '出庫'}</span><div class="grow"><div class="nm">${esc(it?.name || l.jan)}</div><div class="muted sm">${esc(locName(l.loc))} ・ ${fmt(l.ts)}</div></div><div class="qty">×${l.qty}</div></li>`;
   }).join('') || '<li class="muted">まだありません</li>';
 }
 async function undoLast(id) {
@@ -212,13 +216,17 @@ async function handleJan(jan) {
     let it = state.items.get(jan);
     if (state.mode === 'in') {
       if (!it) {
+        let kx = null;
+        if (kxOn()) { toast('買取Xで商品名を検索中…'); kx = await kxGet(jan, { timeout: 6000 }).catch(() => null); $('#toast').classList.remove('show'); }
         const r = await dialog({
           title: '新しい商品',
-          body: `<div class="muted">JAN ${esc(jan)}</div><label>商品名<input data-k="name" placeholder="商品名(空でも可)" autocomplete="off"></label>`,
+          body: `<div class="muted">JAN ${esc(jan)}</div><label>商品名<input data-k="name" placeholder="商品名(空でも可)" autocomplete="off" value="${esc(kx?.name || '')}"></label>` +
+            (kx ? `<div class="muted sm">${kx.name ? '商品名は買取Xから取得しました。' : ''}${kx.max_price ? `買取最高 ${yen(kx.max_price)}` : ''}</div>` : ''),
           buttons: [{ label: '登録して入庫', value: 'ok', cls: 'primary' }, { label: 'キャンセル', value: null }],
         });
         if (r.value !== 'ok') return;
         it = { jan, name: r.fields.name || `JAN ${jan}`, memo: '', created: Date.now() };
+        if (kx) it.kx = kx;
         await dbPut('items', it);
         await reload();
       }
@@ -255,6 +263,108 @@ async function handleJan(jan) {
     lastSeen = Date.now();
   }
 }
+/* ---------- 買取X API(任意。設定でAPIキーを入れたときだけ動く) ---------- */
+// ドキュメント: https://kaitorix.app/open/docs  無料プランは 1日30回・1秒1回まで
+const KX_API = 'https://kaitorix.app/open/api/';
+const KX_TTL = 6 * 3600e3; // 同じJANは6時間は保存した結果を使う(回数節約)
+const kxKey = () => (lsGet('kxKey') || '').trim();
+const kxOn = () => !!kxKey() && lsGet('kxOn') !== '0';
+const yen = (n) => '¥' + Number(n || 0).toLocaleString('ja-JP');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const kxMem = new Map();
+let kxQueue = Promise.resolve(), kxLastAt = 0;
+function kxFetch(path) {
+  const once = async () => {
+    const w = kxLastAt + 1100 - Date.now();
+    if (w > 0) await sleep(w);
+    kxLastAt = Date.now();
+    return fetch(KX_API + path + (path.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(kxKey()), { cache: 'no-store' });
+  };
+  const run = async () => {
+    let r;
+    try { r = await once(); if (r.status === 429) { await sleep(1100); r = await once(); } } // 1秒制限なら1回だけ待って再試行
+    catch { throw new Error('買取Xに接続できませんでした(オフライン、またはブラウザからの直接呼び出しが許可されていない可能性があります)'); }
+    if (r.status === 401) throw new Error('APIキーが正しくありません(設定画面で確認してください)');
+    if (r.status === 404) return null;
+    if (r.status === 429) throw new Error('買取Xの本日の利用回数の上限に達しました(0時にリセット)');
+    if (!r.ok) throw new Error(`買取Xのエラー(HTTP ${r.status})`);
+    return r.json();
+  };
+  const p = kxQueue.then(run, run);
+  kxQueue = p.catch(() => {});
+  return p;
+}
+// JANの商品名・買取価格。{ name, max_price, prices[], fetchedAt } / 見つからなければ { notFound: true, fetchedAt }
+async function kxGet(jan, { force = false, timeout = 0 } = {}) {
+  const it = state.items.get(jan);
+  const cached = it?.kx || kxMem.get(jan);
+  if (!force && cached && Date.now() - cached.fetchedAt < KX_TTL) return cached;
+  const job = (async () => {
+    const d = await kxFetch('product/' + encodeURIComponent(jan));
+    const v = d ? { name: d.name || '', max_price: d.max_price || 0, prices: Array.isArray(d.prices) ? d.prices : [], fetchedAt: Date.now() } : { notFound: true, fetchedAt: Date.now() };
+    kxMem.set(jan, v);
+    const cur = state.items.get(jan);
+    if (cur) { cur.kx = v; await dbPut('items', cur); }
+    return v;
+  })();
+  if (!timeout) return job;
+  return Promise.race([job, sleep(timeout).then(() => { throw new Error('timeout'); })]);
+}
+function kxSummary(v) {
+  if (v.notFound) return '買取X: この商品の買取価格は見つかりませんでした';
+  const live = v.prices.filter((x) => !x.stopped && x.price > 0).sort((a, b) => b.price - a.price);
+  const top = live[0];
+  return top ? `買取最高 <b>${yen(top.price)}</b>(${esc(top.store)})・${live.length}店` : '買取X: 買取中の店舗がありません';
+}
+async function kxAttach(jan) {
+  if (!kxOn()) return;
+  const line = () => { const el = $('#kxLine'); return el && el.dataset.jan === jan ? el : null; };
+  if (!line()) return;
+  line().hidden = false;
+  line().innerHTML = '<span class="muted sm">買取価格を取得中…</span>';
+  try {
+    const v = await kxGet(jan);
+    const el = line();
+    if (!el) return; // 別の商品を読んだ後なら表示しない
+    el.innerHTML = `<span class="sm">${kxSummary(v)}</span>` + (v.notFound ? '' : ` <button type="button" data-kx="${esc(jan)}">買取価格一覧</button>`);
+  } catch (e) {
+    const el = line();
+    if (el) el.innerHTML = `<span class="muted sm">${esc(e.message || e)}</span>`;
+  }
+}
+async function kxDialog(jan, force = false) {
+  if (!kxOn()) { toast('設定画面で買取XのAPIキーを入れると買取価格を見られます'); return; }
+  if (locked) return;
+  locked = true; // 一覧を開いている間はスキャン結果で画面が切り替わらないようにする
+  try {
+    let v;
+    try { v = await kxGet(jan, { force }); } catch (e) { toast(e.message || String(e), true); return; }
+    const it = state.items.get(jan);
+    const rows = (v.prices || []).slice().sort((a, b) => (b.stopped ? -1 : b.price) - (a.stopped ? -1 : a.price));
+    const when = (x) => (x.updated_at ? fmt(Date.parse(x.updated_at)) : (x.updated || ''));
+    const body = `<div class="muted sm">JAN ${esc(jan)}${v.name && v.name !== it?.name ? `<br>買取Xの商品名: ${esc(v.name)}` : ''}</div>` +
+      (v.notFound ? '<p>買取Xにこの商品のデータがありませんでした。</p>'
+        : `<ul class="kxlist">${rows.map((x) => `<li class="${x.stopped ? 'stop' : ''}"><a href="${esc(x.url || '#')}" target="_blank" rel="noopener"><span class="st">${esc(x.store)}</span><span class="pr">${x.stopped ? '停止中' : yen(x.price)}</span></a><div class="muted sm">${esc(when(x))}${x.stale ? ' ・3日以上前' : ''}${x.walkin_bonus ? ` ・店頭+${yen(x.walkin_bonus)}` : ''}${x.mark_note ? ' ・' + esc(x.mark_note) : ''}</div></li>`).join('') || '<li class="muted">価格データがありません</li>'}</ul>`) +
+      `<div class="muted sm">取得: ${fmt(v.fetchedAt)} ・ データ提供: <a href="https://kaitorix.app/" target="_blank" rel="noopener">買取X</a></div>`;
+    const r = await dialog({ title: it?.name || v.name || '買取価格', body, buttons: [{ label: '閉じる', value: null }, { label: '最新の価格を取得', value: 'refresh' }] });
+    if (r.value === 'refresh') { locked = false; await kxDialog(jan, true); }
+  } finally {
+    locked = false;
+  }
+}
+async function kxTest() {
+  const out = $('#kxTest');
+  out.hidden = false;
+  out.textContent = '確認中…';
+  try {
+    const d = await kxFetch('usage');
+    const rem = d && (d.remaining ?? d.today?.remaining ?? d.usage?.remaining);
+    out.textContent = '接続できました' + (rem != null ? `(本日の残り ${rem} 回)` : '');
+  } catch (e) {
+    out.textContent = e.message || String(e);
+  }
+}
+
 function onCode(raw) {
   const jan = normJan(raw);
   if (!jan || /^19[12]/.test(jan)) return; // 書籍の2段目バーコード(191/192)は無視
@@ -456,14 +566,19 @@ async function showItem(jan) {
     <label>メモ<input data-k="memo" value="${esc(it.memo || '')}"></label>
     <div class="muted sm">JAN ${esc(jan)}</div>
     <div class="chips">${st.map(([l, q]) => `<span class="chip">${esc(locName(l))} ${q}</span>`).join('') || '<span class="muted">在庫なし</span>'}</div>
+    ${kxOn() ? `<div class="kxline">${it.kx && !it.kx.notFound ? `<span class="sm">${kxSummary(it.kx)}</span> ` : ''}<button type="button" data-act="kx">買取価格一覧</button></div>` : ''}
     <h4>履歴(新しい順・最大50件)</h4>
     <ul class="hist">${hist.map((m) => `<li><span class="${m.type === 'in' ? 'tag-in' : 'tag-out'}">${m.type === 'in' ? '入庫' : '出庫'}</span><span>${fmt(m.ts)} ${esc(locName(m.loc))} ×${m.qty}</span><button type="button" data-act="delmove" data-id="${m.id}">削除</button></li>`).join('') || '<li class="muted">履歴なし</li>'}</ul>`;
   const r = await dialog({
     title: '商品の詳細',
     body,
     buttons: [{ label: '保存', value: 'save', cls: 'primary' }, { label: '閉じる', value: null }, { label: '商品を削除', value: 'del', cls: 'danger' }],
-    onAct: (el, close) => { if (el.dataset.act === 'delmove') close({ value: 'delmove', id: Number(el.dataset.id), fields: {} }); },
+    onAct: (el, close) => {
+      if (el.dataset.act === 'delmove') close({ value: 'delmove', id: Number(el.dataset.id), fields: {} });
+      if (el.dataset.act === 'kx') close({ value: 'kx', fields: {} });
+    },
   });
+  if (r.value === 'kx') { await kxDialog(jan); showItem(jan); return; }
   if (r.value === 'save') {
     it.name = r.fields.name || it.name;
     it.memo = r.fields.memo || '';
@@ -516,7 +631,7 @@ let installEvt = null;
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; if (state.tab === 'settings') renderSettings(); });
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 function buildBackup() {
-  return JSON.stringify({ app: 'sedori-stock', version: 1, exportedAt: new Date().toISOString(), items: [...state.items.values()], locations: state.locs, moves: state.moves });
+  return JSON.stringify({ app: 'sedori-stock', version: 1, exportedAt: new Date().toISOString(), items: [...state.items.values()].map(({ kx, ...rest }) => rest), locations: state.locs, moves: state.moves });
 }
 const csvCell = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
 function buildMovesCsv() {
@@ -584,8 +699,17 @@ function renderSettings() {
       ${guide ? `<div class="muted sm">${esc(guide)}</div>` : ''}
       <div class="muted sm">データ保護: <span id="persistState">確認中…</span></div>
     </div>
+    <div class="set"><h4>買取価格(買取X・任意)</h4>
+      <div class="muted sm"><a href="https://kaitorix.app/open/" target="_blank" rel="noopener">買取X Open API</a> のAPIキーを入れると、入庫・出庫したJANの商品名と買取価格一覧を表示します。キーはこの端末にだけ保存され、バックアップには含まれません。</div>
+      <label>APIキー<input id="kxKeyIn" type="password" placeholder="ktx_..." autocomplete="off" value="${esc(kxKey())}"></label>
+      <label class="chk"><input type="checkbox" data-opt="kxOn" ${lsGet('kxOn') !== '0' ? 'checked' : ''}>入庫・出庫のときに買取価格を取得する</label>
+      <button type="button" data-do="kx-save" class="primary">保存</button>
+      <button type="button" data-do="kx-test">接続テスト</button>
+      <div id="kxTest" class="sm" hidden></div>
+      <div class="muted sm">無料プランは1日30回まで。同じJANは6時間、保存した結果を使います。規約上、Free/Premiumは個人利用のみです。</div>
+    </div>
     <div class="set" id="verBox"><h4>バージョン</h4>
-      <div>使用中: <b>v${esc(VERSION)}</b> <span class="muted sm">${esc(VINFO.date)}</span></div>
+      <div>使用中: <b>${esc(verLabel(VERSION))}</b> 版</div>
       ${VINFO.notes ? `<div class="muted sm">${esc(VINFO.notes)}</div>` : ''}
       <div class="muted sm" id="verState">確認中…</div>
       <div id="verRemote" class="sm" hidden></div>
@@ -602,6 +726,8 @@ async function settingsDo(act) {
   else if (act === 'export-moves') await saveFile(`moves-${stamp()}.csv`, 'text/csv', buildMovesCsv());
   else if (act === 'export-stock') await saveFile(`stock-${stamp()}.csv`, 'text/csv', buildStockCsv());
   else if (act === 'import-json') $('#importFile').click();
+  else if (act === 'kx-save') { lsSet('kxKey', $('#kxKeyIn').value.trim()); kxMem.clear(); toast(kxKey() ? 'APIキーを保存しました' : 'APIキーを削除しました'); }
+  else if (act === 'kx-test') { lsSet('kxKey', $('#kxKeyIn').value.trim()); if (!kxKey()) { toast('APIキーを入れてください', true); return; } await kxTest(); }
   else if (act === 'ver-check') await checkLatest();
   else if (act === 'ver-update') await applyUpdate();
   else if (act === 'ver-rollback') await rollback();
@@ -640,13 +766,13 @@ async function refreshVerState() {
     return;
   }
   const lines = [];
-  if (i.pinned) lines.push(`前のバージョン v${i.pinned} で固定中です(最新は v${i.installed})`);
-  else lines.push(i.installed !== VERSION ? `端末には v${i.installed} が入っています。アプリを開き直すと切り替わります` : 'この端末に保存済み(オフラインでも起動できます)');
-  if (!i.pinned) lines.push(i.previous ? `戻せる前のバージョン: v${i.previous}` : '戻せる前のバージョン: まだありません(次の更新から使えます)');
+  if (i.pinned) lines.push(`前のバージョン ${verLabel(i.pinned)} 版で固定中です(最新は ${verLabel(i.installed)} 版)`);
+  else lines.push(i.installed !== VERSION ? `端末には ${verLabel(i.installed)} 版が入っています。アプリを開き直すと切り替わります` : 'この端末に保存済み(オフラインでも起動できます)');
+  if (!i.pinned) lines.push(i.previous ? `戻せる前のバージョン: ${verLabel(i.previous)} 版` : '戻せる前のバージョン: まだありません(次の更新から使えます)');
   st.innerHTML = lines.map(esc).join('<br>');
   btns.innerHTML = i.pinned
     ? '<button type="button" data-do="ver-latest" class="primary">最新バージョンに戻す</button>'
-    : (i.previous ? `<button type="button" data-do="ver-rollback">前のバージョン(v${esc(i.previous)})に戻す</button>` : '');
+    : (i.previous ? `<button type="button" data-do="ver-rollback">前のバージョン(${esc(verLabel(i.previous))} 版)に戻す</button>` : '');
 }
 async function fetchLatestInfo() {
   const r = await fetch(`stock-version.js?nocache=${Date.now()}`, { cache: 'no-store' });
@@ -664,11 +790,11 @@ async function checkLatest() {
   try { info = await fetchLatestInfo(); } catch { box.textContent = 'サーバーに接続できませんでした(オフラインかもしれません)'; return; }
   const i = await swMsg('info');
   if (verCmp(info.version, VERSION) > 0) {
-    box.innerHTML = `<b>新しいバージョン v${esc(info.version)} があります</b>(${esc(info.date || '')})<br><span class="muted">${esc(info.notes || '')}</span><br><button type="button" data-do="ver-update" class="primary">更新する</button>`;
+    box.innerHTML = `<b>新しいバージョン(${esc(verLabel(info.version))} 版)があります</b><br><span class="muted">${esc(info.notes || '')}</span><br><button type="button" data-do="ver-update" class="primary">更新する</button>`;
   } else if (i?.pinned) {
-    box.innerHTML = `最新は v${esc(info.version)} です。いまは前のバージョンで固定中です。`;
+    box.innerHTML = `最新は ${esc(verLabel(info.version))} 版です。いまは前のバージョンで固定中です。`;
   } else {
-    box.textContent = `最新バージョン(v${info.version})を使っています`;
+    box.textContent = `最新バージョン(${verLabel(info.version)} 版)を使っています`;
   }
 }
 async function applyUpdate() {
@@ -700,7 +826,7 @@ async function applyUpdate() {
 async function rollback() {
   const i = await swMsg('info');
   if (!i?.previous) { toast('戻せる前のバージョンがありません', true); return; }
-  if (!(await confirmDlg('前のバージョンに戻す', `v${esc(i.previous)} に戻します。商品・倉庫・履歴のデータはそのまま残ります。あとから「最新バージョンに戻す」で元に戻せます。`, '戻す', false))) return;
+  if (!(await confirmDlg('前のバージョンに戻す', `${esc(verLabel(i.previous))} 版に戻します。商品・倉庫・履歴のデータはそのまま残ります。あとから「最新バージョンに戻す」で元に戻せます。`, '戻す', false))) return;
   stopCam();
   const r = await swMsg('pin-previous');
   if (!r?.pinned) { toast('切り替えできませんでした', true); return; }
@@ -745,7 +871,11 @@ function bind() {
     $('#manualJan').value = '';
     handleJan(jan);
   });
-  $('#last').addEventListener('click', (e) => { const b = e.target.closest('[data-undo]'); if (b) undoLast(Number(b.dataset.undo)); });
+  $('#last').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-undo]'); if (b) undoLast(Number(b.dataset.undo));
+    const k = e.target.closest('[data-kx]'); if (k) kxDialog(k.dataset.kx);
+  });
+  $('#log').addEventListener('click', (e) => { const li = e.target.closest('li[data-jan]'); if (li && kxOn()) kxDialog(li.dataset.jan); });
   $('#bkBanner').addEventListener('click', () => showTab('settings'));
   $('#v-locs').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (b) locAction(b.dataset.act, Number(b.dataset.id)); });
   $('#v-locs').addEventListener('submit', async (e) => {
@@ -762,6 +892,7 @@ function bind() {
     const o = e.target.dataset.opt;
     if (o === 'allowNeg') lsSet('allowNeg', e.target.checked ? '1' : '0');
     if (o === 'sound') lsSet('sound', e.target.checked ? '1' : '0');
+    if (o === 'kxOn') lsSet('kxOn', e.target.checked ? '1' : '0');
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopCam(); });
 }
