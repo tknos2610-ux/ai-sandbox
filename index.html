@@ -360,6 +360,20 @@
         <section>
             <h2>ブログ記事</h2>
             <div class="blog-list">
+                <!-- Post 6 (Solution) -->
+                <article class="blog-item" onclick="openBlog(6)">
+                    <div class="blog-meta">2026-11-27 &bull; 解決編・開発記録</div>
+                    <h3>JANから商品名を自動で取りたい：API比較と多段構えの構成（解決編）</h3>
+                    <p class="blog-summary">Yahoo!ショッピング・楽天・買取X・openBDなどのAPIを比較し、せどり在庫アプリv3で採用する「多段構え＋キャッシュ」の構成をまとめました。</p>
+                </article>
+
+                <!-- Post 5 (Problem) -->
+                <article class="blog-item" onclick="openBlog(5)">
+                    <div class="blog-meta">2026-11-27 &bull; 問題編・トラブルシューティング</div>
+                    <h3>JANから商品名を自動で取りたい：せどり在庫アプリv3で詰まったこと（問題編）</h3>
+                    <p class="blog-summary">登録不要APIのヒット率、買取比較サイトの規約、Jina Reader/defuddle.mdの限界、楽天・AmazonのAPI仕様変更など、商品名の自動取得でぶつかった壁の記録。</p>
+                </article>
+
                 <!-- Post 1 -->
                 <article class="blog-item" onclick="openBlog(1)">
                     <div class="blog-meta">2026-11-18 &bull; 開発記録</div>
@@ -452,6 +466,33 @@
                     <p><strong>1. AIサービスの制限とつまずき</strong><br>Julesの終了（12月31日）、GitHub CopilotやClaude Codeの有料制限、OpenAI Codexのクラウド機能なし、opencodeの未確認など、多くのサービスが無料枠でそのまま使えない壁にぶつかりました。また、OpenHands設定時の <code>repository variable LLM_MODEL is not set</code> エラーなども発生しました。</p>
                     <p><strong>2. iPhone単体での情報収集と公開の限界</strong><br>X（Twitter）の公式API無料枠制限による自動取得の断念、Claude無料プランでのアーティファクト共有機能（公開リンク）の非対応、GitHubリポジトリ作成の手動対応など、モバイル環境ならではの制約に直面しました。</p>
                     <p><strong>3. 教訓</strong><br>無料枠やモバイル環境での自動化は制約が多く、適切なツール選定とトラブルシューティングが不可欠であることを学びました。</p>
+                `
+            },
+            5: {
+                date: "2026-11-27",
+                category: "問題編・トラブルシューティング",
+                title: "JANから商品名を自動で取りたい：せどり在庫アプリv3で詰まったこと（問題編）",
+                content: `
+                    <p>せどり用の在庫管理アプリ（PWA）は、v2でJANコードのスキャンによる入出庫まで作りました。v3では「JANを読んだら商品名が自動で入る」機能を、できれば<strong>APIキー不要・登録なし・無料</strong>で追加したかったのですが、思った以上に壁が多くありました。</p>
+                    <p><strong>1. 登録不要のAPIは日本の商品がほぼ当たらない</strong><br>Open Food Factsは食品・飲料だけで、日本の商品は登録が少なめ。UPCitemdbのお試し枠は1日100回程度で、海外商品が中心です。本・おもちゃ・家電・日用品はほぼ空振りします。</p>
+                    <p><strong>2. 買取比較サイトからは取れない（取ってはいけない）</strong><br>買取X（kaitorix.app）には正式なOpen APIがありますが、Googleログインが必要で、無料枠は1日30回・個人利用のみ。サイトのデータの無断転用は禁止と明記されているので、スクレイピングはNGです。そもそもGitHub Pagesのアプリから他サイトを直接読むと、ブラウザのCORSでブロックされます。kaitori-search.appとkaitori.appは、APIがあるか確認できませんでした。</p>
+                    <p><strong>3. Jina Reader / defuddle.md を挟んでも解決しない</strong><br>どちらもキーなしでURLをMarkdownに変換できますが、記事の本文抽出向けで、商品ページの構造化データは苦手です。JavaScriptで描画されるページは空で返る可能性があり、元サイトの規約もそのまま。Jina Readerのキーなし枠は1分20回ほどで、同じIPの全員で共有です。</p>
+                    <p><strong>4. 大手のAPIも2026年に仕様が変わっていた</strong><br>楽天ウェブサービスは旧API（app.rakuten.co.jp系）が5月13日に廃止され、新APIではaccessKeyとRefererチェックが必須に。AmazonはPA-API 5.0が廃止されてCreators APIに移行し、承認済みのアソシエイトアカウントが必要です。</p>
+                    <p><strong>まとめ</strong><br>「登録なし・無料・確実」を1つのサービスで同時に満たすのは無理でした。複数の方法を組み合わせる方針に切り替え、解決編にまとめています。</p>
+                `
+            },
+            6: {
+                date: "2026-11-27",
+                category: "解決編・開発記録",
+                title: "JANから商品名を自動で取りたい：API比較と多段構えの構成（解決編）",
+                content: `
+                    <p>問題編でぶつかった壁を踏まえて、APIを比較した結果と、せどり在庫アプリv3で採用する構成をまとめます。</p>
+                    <p><strong>1. 方針：1つに頼らず、多段構え＋キャッシュ</strong><br>JANで直接引けるAPIを最初に使い、見つからなければ別の手段にフォールバック。一度取れた商品名は端末に保存して、2回目以降はAPIを使いません。せどりは同じ商品を何度も扱うので、キャッシュがかなり効きます。</p>
+                    <p><strong>2. APIの比較</strong><br>・<strong>Yahoo!ショッピング 商品検索API</strong>：Yahoo! JAPAN IDで無料登録。JANで直接検索でき、商品の幅も広い。1分30回程度が目安で、「Web Services by Yahoo! JAPAN」のクレジット表示が必要。<br>・<strong>楽天ウェブサービス</strong>：無料登録。2026年の新仕様で、アプリ設定にサイトURLの登録が必要。JAN専用検索はなくキーワード検索で代用。<br>・<strong>買取X Open API</strong>：Googleログインのみ。無料枠は1日30回・個人利用。買取価格も取れる。<br>・<strong>openBD / Google Books</strong>：本ならISBNで登録なしに引ける。<br>・<strong>Amazon Creators API</strong>：承認済みアソシエイトアカウントが必要なので対象外。<br>結論として、<strong>登録ありならYahoo!ショッピングが最適</strong>です。</p>
+                    <p><strong>3. v3で採用する構成</strong><br>本（978/979始まり）はopenBD → それ以外はYahoo!でJAN検索 → 見つからなければ楽天でキーワード検索 → 取れた名前は端末の商品マスタに保存 → それでもダメなら検索ボタン＋手入力。</p>
+                    <p><strong>4. 登録したくない人向けの代替手段</strong><br>自分専用の商品マスタ、Amazon・楽天・Googleのワンタップ検索ボタン＋貼り付け、Androidは共有メニューから自動入力（Web Share Target API）、iPhoneは「ショートカット」アプリで代用、パッケージの商品名はカメラの「テキスト認識表示」でコピー。半自動でもかなり楽になります。</p>
+                    <p><strong>5. 実装上の注意点</strong><br>APIキーはコードに書かず、アプリの設定画面で入力して端末内だけに保存。Yahooのクレジット表示を入れる。楽天はGitHub PagesのURLを登録する。ブラウザから直接呼べるか（CORS）は実機で確認する。</p>
+                    <p>次は、この構成でv3を実装します。</p>
                 `
             }
         };
