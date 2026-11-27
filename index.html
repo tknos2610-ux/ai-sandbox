@@ -360,6 +360,20 @@
         <section>
             <h2>ブログ記事</h2>
             <div class="blog-list">
+                <!-- Post 8 (Solution) -->
+                <article class="blog-item" onclick="openBlog(8)">
+                    <div class="blog-meta">2026-11-27 &bull; 解決編・開発記録</div>
+                    <h3>動かない在庫アプリを直した手順：ファイル分離と、AIに任せない配置（解決編）</h3>
+                    <p class="blog-summary">在庫アプリを stock.* に分離し、共通のsw.jsを復元、Service Workerの範囲を絞って直した手順。コピー・照合・構文チェックで確実に配置するコツをまとめました。</p>
+                </article>
+
+                <!-- Post 7 (Problem) -->
+                <article class="blog-item" onclick="openBlog(7)">
+                    <div class="blog-meta">2026-11-27 &bull; 問題編・トラブルシューティング</div>
+                    <h3>せどり在庫アプリをGitHub Pagesに置いたら動かなかった：原因は「壊れたapp.js」だった（問題編）</h3>
+                    <p class="blog-summary">途中で欠けたapp.js、足りないアイコン、上書きされた共通のsw.js。画面は出るのに何も動かなかった原因を、行数比較と構文チェックで突き止めた記録。</p>
+                </article>
+
                 <!-- Post 6 (Solution) -->
                 <article class="blog-item" onclick="openBlog(6)">
                     <div class="blog-meta">2026-11-27 &bull; 解決編・開発記録</div>
@@ -493,6 +507,33 @@
                     <p><strong>4. 登録したくない人向けの代替手段</strong><br>自分専用の商品マスタ、Amazon・楽天・Googleのワンタップ検索ボタン＋貼り付け、Androidは共有メニューから自動入力（Web Share Target API）、iPhoneは「ショートカット」アプリで代用、パッケージの商品名はカメラの「テキスト認識表示」でコピー。半自動でもかなり楽になります。</p>
                     <p><strong>5. 実装上の注意点</strong><br>APIキーはコードに書かず、アプリの設定画面で入力して端末内だけに保存。Yahooのクレジット表示を入れる。楽天はGitHub PagesのURLを登録する。ブラウザから直接呼べるか（CORS）は実機で確認する。</p>
                     <p>次は、この構成でv3を実装します。</p>
+                `
+            },
+            7: {
+                date: "2026-11-27",
+                category: "問題編・トラブルシューティング",
+                title: "せどり在庫アプリをGitHub Pagesに置いたら動かなかった：原因は「壊れたapp.js」だった（問題編）",
+                content: `
+                    <p>せどり用の在庫管理アプリ（PWA）のv1をAIに作ってもらい、GitHub Pagesに置いたところ「うまく動きません」。画面は出るのに、ボタンを押しても何も起きない状態でした。原因を順番にまとめます。</p>
+                    <p><strong>1. GitHub上のapp.jsが途中で欠けていた</strong><br>最初に作ったものは644行で構文チェックOK。GitHub上のものは377行で、<code>SyntaxError: missing ) after argument list</code> になりました。312行目あたりでカメラ処理の途中からタブ切り替えの処理に飛んでおり、約270行（カメラ・在庫一覧・倉庫・設定）が抜けていました。JavaScriptは1か所でも構文エラーがあるとファイル全体が動かないので、画面だけ出て何も反応しませんでした。IssueからAI（OpenHands）に取り込ませたコミットで入ったファイルで、コピーではなく書き直したために欠けたとみられます。</p>
+                    <p><strong>2. アイコン画像がリポジトリになかった</strong><br>参照している icon-180/192/512.png が存在せず（あったのは別アプリ用の1×1の icon.png だけ）。Service Workerは必要なファイルをまとめてキャッシュするので、1つでも404だと登録が丸ごと失敗します。オフライン動作もホーム画面への追加も成立しません。</p>
+                    <p><strong>3. 共通のsw.jsが上書きされ、ほかのアプリまで巻き込まれた</strong><br>同じリポジトリの index.html と split-bill.html は ./sw.js を登録しています。取り込みでこのsw.jsが在庫アプリ用に置き換わり、既存アプリのオフライン動作まで壊れていました。</p>
+                    <p><strong>4. 追加で詰まったこと</strong><br>AIの作業環境から公開URLを読めない／GitHubアカウントを連携するまで書き込みが403／iPhoneだけだとzipを展開できずファイルの差し替えが面倒。さらに「コピーして配置して」というIssueも、OpenHandsが <code>cp</code> ではなく <code>git mv</code> で改名して中身を書き換え、「指示違反（解決できなかった）」と判定されました。</p>
+                    <p><strong>まとめ</strong><br>「コピーするだけ」の作業をAIが書き直すと、長いファイルは途中で欠けることがあります。欠けても画面だけは出るので、見た目では気づけません。共通のファイル名（sw.jsなど）の使い回しは上書き事故のもとです。直し方は解決編に書いています。</p>
+                `
+            },
+            8: {
+                date: "2026-11-27",
+                category: "解決編・開発記録",
+                title: "動かない在庫アプリを直した手順：ファイル分離と、AIに任せない配置（解決編）",
+                content: `
+                    <p>問題編の原因（欠けたapp.js・足りないアイコン・上書きされたsw.js）を、どう突き止めて直したかをまとめます。</p>
+                    <p><strong>1. 突き止め方</strong><br>リポジトリを手元に取得して、(1) <code>wc -l</code> で行数を比べる（644行 vs 377行）、(2) <code>node --check</code> で構文エラーの行を特定する、(3) <code>git log</code> でsw.jsの元の内容と上書きの時期を確認する、の3つを行いました。履歴が浅いときは <code>git fetch --depth=30</code> で少し深く取得します。</p>
+                    <p><strong>2. 直した内容</strong><br>・在庫アプリのファイルを <code>stock.html / stock.js / stock-sw.js / stock.webmanifest / stock-icon-*.png</code> に分離（他のアプリと名前がぶつからない）<br>・共通の <code>sw.js</code> を履歴から取り出して元のlab-notes用に復元<br>・Service Workerの範囲を絞る：<code>register('stock-sw.js', { scope: './stock.html' })</code>。同じ範囲にService Workerは1つしか置けないので、ルート全体を担当する既存のsw.jsとぶつからなくなります<br>・3サイズのアイコンPNGを追加し、キャッシュ対象を全部そろえる</p>
+                    <p><strong>3. 配置前に手元でテスト</strong><br>本物のブラウザ（Chromium＋疑似カメラ）で、JANの手入力による入出庫・商品登録・不正JANの拒否・在庫一覧・倉庫追加、Service Workerの有効化、オフライン再読み込み（データが残る）を確認しました。iPhone用のZXing読み込みだけは作業環境のネットワークの都合で確認できず、カメラは実機で確かめる必要がありました。</p>
+                    <p><strong>4. 反映：AIに任せず、そのまま置く</strong><br>iPhoneのSafariで、直したファイルを <code>content/sources/</code> に保存。Issueで直下へのコピーを頼みましたが、OpenHandsは書き換えてしまい失敗。最終的にGitHubアカウントをClaudeに連携して書き込み権限を渡し、(1) <code>cp</code> でコピー、(2) 8ファイルを <code>cmp</code> で照合、(3) <code>node --check</code> で構文確認、(4) 壊れたapp.jsと不要なmanifest.webmanifestを削除、(5) READMEを更新してmainにpush、の順で反映しました。1〜2分後にカメラが起動しました。</p>
+                    <p><strong>5. うまくいくコツ</strong><br>・ファイルの配置はAIに再生成させず、コピーと照合だけにする<br>・行数と <code>node --check</code> で欠けを確認する<br>・共通のファイル名を使い回さず、アプリごとに専用名にしてService Workerの範囲も絞る<br>・Service Workerのキャッシュ対象は全部そろえる<br>・古い状態が残ったら、Safariのタブを閉じて開き直す（ホーム画面に追加済みなら削除して追加し直す）<br>・カメラは実機で確認する</p>
+                    <p>次は、この在庫アプリにJANから商品名を自動取得するv3を実装します。</p>
                 `
             }
         };
