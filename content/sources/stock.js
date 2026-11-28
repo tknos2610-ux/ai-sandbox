@@ -185,7 +185,7 @@ function showLast(m) {
   box.innerHTML = `<div class="l1"><b>${m.type === 'in' ? '入庫' : '出庫'}</b> ${esc(it?.name)} <span>×${m.qty}</span></div>
     <div class="l2">${esc(locName(m.loc))}の在庫 ${stockOf(m.jan).get(m.loc) || 0} / 全体 ${totalOf(m.jan)}</div>
     <div id="kxLine" class="kxline" data-jan="${esc(m.jan)}" hidden></div>
-    <button type="button" data-undo="${m.id}">取り消し</button>`;
+    <button type="button" data-undo="${m.id}">取り消し</button> <button type="button" data-shop="${esc(m.jan)}">店のサイトで検索</button>`;
   kxAttach(m.jan);
 }
 function renderLog() {
@@ -263,6 +263,29 @@ async function handleJan(jan) {
     lastSeen = Date.now();
   }
 }
+/* ---------- 各買取店のサイトでJAN検索(リンクを開くだけ。自動取得はしない) ---------- */
+// 各店の検索ページにJANを入れて開く。価格は自分の目で確認する。URLの形は買取Xの商品ページのリンクを参考にした
+const SHOP_SEARCH = [
+  ['買取X(価格比較)', 'https://kaitorix.app/dp/{JAN}'],
+  ['家電市場', 'https://www.kaden-ichiba.com/item/search/{JAN}'],
+  ['携帯空間', 'https://www.keitaispace.co.jp/product/?kw={JAN}#list'],
+  ['買取楽園', 'https://www.keitairakuen.com/?swp_form%5Bform_id%5D=1&s={JAN}'],
+  ['森森買取', 'https://www.morimori-kaitori.jp/search?sk={JAN}'],
+  ['買取商店', 'https://www.kaitorishouten-co.jp/products/list?name={JAN}'],
+  ['買取wiki', 'https://gamekaitori.jp/search?type=&q={JAN}'],
+  ['買取ルデヤ', 'https://kaitori-rudeya.com/search/index/{JAN}/'],
+  ['PANDA買取', 'https://panda-kaitori.co.jp/?cpro=&s={JAN}'],
+  ['買取エノキング', 'https://newenoking-kaitori.com/products?q={JAN}'],
+];
+async function shopSearchDialog(jan) {
+  const it = state.items.get(jan);
+  const body = `<div class="muted sm">JAN ${esc(jan)} を各店のサイトで検索します(ブラウザで開きます)</div>
+    <ul class="shoplist">${SHOP_SEARCH.map(([n, u]) => `<li><a href="${esc(u.replace('{JAN}', encodeURIComponent(jan)))}" target="_blank" rel="noopener">${esc(n)}</a></li>`).join('')}</ul>`;
+  const prev = locked;
+  locked = true;
+  try { await dialog({ title: it?.name || '店のサイトで検索', body, buttons: [{ label: '閉じる', value: null }] }); } finally { locked = prev; }
+}
+
 /* ---------- 買取X API(任意。設定でAPIキーを入れたときだけ動く) ---------- */
 // ドキュメント: https://kaitorix.app/open/docs  無料プランは 1日30回・1秒1回まで
 const KX_API = 'https://kaitorix.app/open/api/';
@@ -346,8 +369,9 @@ async function kxDialog(jan, force = false) {
       (v.notFound ? '<p>買取Xにこの商品のデータがありませんでした。</p>'
         : `<ul class="kxlist">${rows.map((x) => `<li class="${x.stopped ? 'stop' : ''}"><a href="${esc(x.url || '#')}" target="_blank" rel="noopener"><span class="st">${esc(x.store)}</span><span class="pr">${x.stopped ? '停止中' : yen(x.price)}</span></a><div class="muted sm">${esc(when(x))}${x.stale ? ' ・3日以上前' : ''}${x.walkin_bonus ? ` ・店頭+${yen(x.walkin_bonus)}` : ''}${x.mark_note ? ' ・' + esc(x.mark_note) : ''}</div></li>`).join('') || '<li class="muted">価格データがありません</li>'}</ul>`) +
       `<div class="muted sm">取得: ${fmt(v.fetchedAt)} ・ データ提供: <a href="https://kaitorix.app/" target="_blank" rel="noopener">買取X</a></div>`;
-    const r = await dialog({ title: it?.name || v.name || '買取価格', body, buttons: [{ label: '閉じる', value: null }, { label: '最新の価格を取得', value: 'refresh' }] });
+    const r = await dialog({ title: it?.name || v.name || '買取価格', body, buttons: [{ label: '閉じる', value: null }, { label: '最新の価格を取得', value: 'refresh' }, { label: '店のサイトで検索', value: 'shop' }] });
     if (r.value === 'refresh') { locked = false; await kxDialog(jan, true); }
+    if (r.value === 'shop') { locked = false; await shopSearchDialog(jan); }
   } finally {
     locked = false;
   }
@@ -399,13 +423,63 @@ const camConstraints = { video: { facingMode: { ideal: 'environment' }, width: {
 // フレームを1枚おきに白黒反転して読む仕組みと、TRY_HARDER の回転読み取りが干渉して、
 // 横向きのバーコードが毎回「反転した画像」で読まれてしまい、ほぼ読めなくなる不具合がある。
 // そのため映像の取り込みはアプリ側で行い、反転なしの画像をデコーダーに直接渡す。
-function makeZxScanner() {
+function zxReaderNew() {
   const Z = window.ZXing;
   const hints = new Map();
   hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A]);
   hints.set(Z.DecodeHintType.TRY_HARDER, true);
   const reader = new Z.MultiFormatReader();
   reader.setHints(hints);
+  return reader;
+}
+function zxDecodeCanvas(reader, cv) {
+  const Z = window.ZXing;
+  try {
+    return reader.decodeWithState(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(cv)))).getText();
+  } catch {
+    return null;
+  } finally {
+    try { reader.reset(); } catch { /* ignore */ }
+  }
+}
+
+// 写真で読む: 端末のカメラで撮った静止画(高解像度・ピント合わせあり)から読む。動画で読めないときの予備
+async function decodePhoto(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const W = img.naturalWidth, H = img.naturalHeight;
+    if ('BarcodeDetector' in window) {
+      try {
+        const r = await new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a'] }).detect(img);
+        if (r.length) return r[0].rawValue;
+      } catch { /* ZXingで再挑戦 */ }
+    }
+    await loadZX();
+    const reader = zxReaderNew();
+    const cv = document.createElement('canvas');
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    // 大きさ・切り出し範囲を変えて何回か試す [長辺px, 切り出し割合]
+    const tries = [[1600, 1], [1000, 1], [1600, 0.6], [2400, 1], [1200, 0.4]];
+    for (const [max, part] of tries) {
+      const sw = Math.round(W * part), sh = Math.round(H * part);
+      const k = Math.min(1, max / Math.max(sw, sh));
+      cv.width = Math.round(sw * k); cv.height = Math.round(sh * k);
+      ctx.drawImage(img, Math.round((W - sw) / 2), Math.round((H - sh) / 2), sw, sh, 0, 0, cv.width, cv.height);
+      const t = zxDecodeCanvas(reader, cv);
+      if (t) return t;
+      await sleep(0);
+    }
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function makeZxScanner() {
+  const reader = zxReaderNew();
   const cv = document.createElement('canvas');
   const ctx = cv.getContext('2d', { willReadFrequently: true });
   let n = 0;
@@ -421,14 +495,7 @@ function makeZxScanner() {
     const dw = Math.round(sw * k), dh = Math.round(sh * k);
     if (cv.width !== dw || cv.height !== dh) { cv.width = dw; cv.height = dh; }
     ctx.drawImage(video, sx, sy, sw, sh, 0, 0, dw, dh);
-    try {
-      const bmp = new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(cv)));
-      return reader.decodeWithState(bmp).getText();
-    } catch {
-      return null; // 見つからない・読み取り失敗は次のフレームで再挑戦
-    } finally {
-      try { reader.reset(); } catch { /* ignore */ }
-    }
+    return zxDecodeCanvas(reader, cv); // 見つからなければ null(次のフレームで再挑戦)
   };
 }
 function setCamUI(msg) {
@@ -566,7 +633,7 @@ async function showItem(jan) {
     <label>メモ<input data-k="memo" value="${esc(it.memo || '')}"></label>
     <div class="muted sm">JAN ${esc(jan)}</div>
     <div class="chips">${st.map(([l, q]) => `<span class="chip">${esc(locName(l))} ${q}</span>`).join('') || '<span class="muted">在庫なし</span>'}</div>
-    ${kxOn() ? `<div class="kxline">${it.kx && !it.kx.notFound ? `<span class="sm">${kxSummary(it.kx)}</span> ` : ''}<button type="button" data-act="kx">買取価格一覧</button></div>` : ''}
+    <div class="kxline">${kxOn() ? `${it.kx && !it.kx.notFound ? `<span class="sm">${kxSummary(it.kx)}</span> ` : ''}<button type="button" data-act="kx">買取価格一覧</button>` : ''}<button type="button" data-act="shop">店のサイトで検索</button></div>
     <h4>履歴(新しい順・最大50件)</h4>
     <ul class="hist">${hist.map((m) => `<li><span class="${m.type === 'in' ? 'tag-in' : 'tag-out'}">${m.type === 'in' ? '入庫' : '出庫'}</span><span>${fmt(m.ts)} ${esc(locName(m.loc))} ×${m.qty}</span><button type="button" data-act="delmove" data-id="${m.id}">削除</button></li>`).join('') || '<li class="muted">履歴なし</li>'}</ul>`;
   const r = await dialog({
@@ -576,9 +643,11 @@ async function showItem(jan) {
     onAct: (el, close) => {
       if (el.dataset.act === 'delmove') close({ value: 'delmove', id: Number(el.dataset.id), fields: {} });
       if (el.dataset.act === 'kx') close({ value: 'kx', fields: {} });
+      if (el.dataset.act === 'shop') close({ value: 'shop', fields: {} });
     },
   });
   if (r.value === 'kx') { await kxDialog(jan); showItem(jan); return; }
+  if (r.value === 'shop') { await shopSearchDialog(jan); showItem(jan); return; }
   if (r.value === 'save') {
     it.name = r.fields.name || it.name;
     it.memo = r.fields.memo || '';
@@ -799,6 +868,7 @@ async function checkLatest() {
 }
 async function applyUpdate() {
   const box = $('#verRemote');
+  box.hidden = false;
   box.textContent = '更新しています…';
   stopCam();
   try {
@@ -822,6 +892,23 @@ async function applyUpdate() {
   } catch (e) {
     box.textContent = '更新できませんでした: ' + (e.message || e);
   }
+}
+// スキャン画面の下にバージョンを表示し、新しい版があれば知らせる
+async function showVerFoot() {
+  const el = $('#verFoot');
+  el.innerHTML = `バージョン ${esc(verLabel(VERSION))} 版`;
+  if (!navigator.onLine) return;
+  try {
+    const info = await fetchLatestInfo();
+    if (verCmp(info.version, VERSION) > 0) {
+      el.innerHTML = `バージョン ${esc(verLabel(VERSION))} 版 ・ <b>新しい版(${esc(verLabel(info.version))})があります</b> <button type="button" id="verFootUp">更新する</button>`;
+      $('#verFootUp').addEventListener('click', async () => {
+        el.innerHTML = '更新しています…';
+        showTab('settings');
+        await applyUpdate();
+      });
+    }
+  } catch { /* オフラインなど */ }
 }
 async function rollback() {
   const i = await swMsg('info');
@@ -863,6 +950,19 @@ function bind() {
     if (r.value === 'ok') { const n = Math.floor(Number(r.fields.n)); if (n >= 1 && n <= 999) { state.qty = n; updateQty(); } }
   });
   $('#camBtn').addEventListener('click', () => (scanning ? (stopCam(), setCamUI('カメラは停止中')) : startCam()));
+  $('#photoBtn').addEventListener('click', () => { initAudio(); if (scanning) stopCam(); $('#photoIn').click(); });
+  $('#photoIn').addEventListener('change', async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    toast('読み取り中…');
+    let code = null;
+    try { code = await decodePhoto(f); } catch { code = null; }
+    const jan = code && normJan(code);
+    if (!jan) { toast('バーコードを読み取れませんでした。バーコードを画面いっぱい・横向きに、ピントを合わせて撮ってください', true); return; }
+    $('#toast').classList.remove('show');
+    handleJan(jan);
+  });
   $('#manual').addEventListener('submit', (e) => {
     e.preventDefault();
     initAudio();
@@ -874,8 +974,9 @@ function bind() {
   $('#last').addEventListener('click', (e) => {
     const b = e.target.closest('[data-undo]'); if (b) undoLast(Number(b.dataset.undo));
     const k = e.target.closest('[data-kx]'); if (k) kxDialog(k.dataset.kx);
+    const sh = e.target.closest('[data-shop]'); if (sh) shopSearchDialog(sh.dataset.shop);
   });
-  $('#log').addEventListener('click', (e) => { const li = e.target.closest('li[data-jan]'); if (li && kxOn()) kxDialog(li.dataset.jan); });
+  $('#log').addEventListener('click', (e) => { const li = e.target.closest('li[data-jan]'); if (li) (kxOn() ? kxDialog(li.dataset.jan) : shopSearchDialog(li.dataset.jan)); });
   $('#bkBanner').addEventListener('click', () => showTab('settings'));
   $('#v-locs').addEventListener('click', (e) => { const b = e.target.closest('button[data-act]'); if (b) locAction(b.dataset.act, Number(b.dataset.id)); });
   $('#v-locs').addEventListener('submit', async (e) => {
@@ -903,6 +1004,7 @@ async function init() {
   await reload();
   if (!state.locs.length) { await dbPut('locations', { name: '倉庫1' }); await reload(); }
   bind();
+  showVerFoot();
   setMode(state.mode);
   refreshLocSel();
   updateQty();

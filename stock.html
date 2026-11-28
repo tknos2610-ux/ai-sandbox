@@ -79,6 +79,9 @@ label input{margin-top:4px;color:var(--fg)}
 .kxlist a{display:flex;justify-content:space-between;gap:10px;color:inherit;text-decoration:none}
 .kxlist .pr{font-weight:700;white-space:nowrap}.kxlist li.stop{opacity:.55}
 #log li[data-jan]{cursor:pointer}
+.camrow .big{margin:10px 0}#camBtn{flex:2}#photoBtn{flex:1}
+.verfoot{text-align:center;margin:18px 0 6px}
+.shoplist{list-style:none;margin:8px 0;padding:0}.shoplist a{display:block;padding:10px 4px;border-bottom:1px solid var(--line);color:inherit;text-decoration:none}.shoplist a::after{content:'›';float:right;color:var(--muted)}
 .hist{list-style:none;padding:0;margin:0}
 .hist li{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}
 .hist li button{margin-left:auto;padding:4px 10px;font-size:12px}
@@ -104,7 +107,12 @@ label input{margin-top:4px;color:var(--fg)}
       <div class="tag" id="camTag">入庫</div>
       <div class="msg" id="camMsg">カメラは停止中</div>
     </div>
-    <button type="button" id="camBtn" class="big primary">カメラを開始</button>
+    <div class="row camrow">
+      <button type="button" id="camBtn" class="big primary">カメラを開始</button>
+      <button type="button" id="photoBtn" class="big">写真で読む</button>
+    </div>
+    <input type="file" id="photoIn" accept="image/*" capture="environment" hidden>
+    <div class="muted sm">カメラを開始して、バーコードを枠の中に<b>横向き</b>に映すと<b>自動で読み取ります</b>(シャッターは不要)。読めないときは「写真で読む」でバーコードを大きく撮ってください。</div>
     <form id="manual" class="row">
       <input id="manualJan" inputmode="numeric" placeholder="JANを手入力(8桁・13桁)" maxlength="13" autocomplete="off">
       <button type="submit">記録</button>
@@ -112,6 +120,7 @@ label input{margin-top:4px;color:var(--fg)}
     <div id="last" class="card" hidden></div>
     <h3>今回の記録</h3>
     <ul id="log" class="list"></ul>
+    <div class="muted sm verfoot" id="verFoot"></div>
   </section>
   <section id="v-stock" hidden></section>
   <section id="v-locs" hidden></section>
