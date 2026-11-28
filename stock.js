@@ -295,6 +295,8 @@ async function handleJan(jan, fromCam = false) {
 // 各店の検索ページにJANを入れて開く。価格は自分の目で確認する。URLの形は買取Xの商品ページのリンクを参考にした
 const SHOP_SEARCH = [
   ['買取X(価格比較)', 'https://kaitorix.app/dp/{JAN}'],
+  ['kaitori-search.app(価格比較)', 'https://kaitori-search.app/product/{JAN}'],
+  ['kaitori.app(価格比較)', 'https://kaitori.app/item/{JAN}'],
   ['家電市場', 'https://www.kaden-ichiba.com/item/search/{JAN}'],
   ['携帯空間', 'https://www.keitaispace.co.jp/product/?kw={JAN}#list'],
   ['買取楽園', 'https://www.keitairakuen.com/?swp_form%5Bform_id%5D=1&s={JAN}'],
