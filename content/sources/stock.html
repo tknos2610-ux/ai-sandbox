@@ -42,9 +42,9 @@ label input{margin-top:4px;color:var(--fg)}
 .stepper{display:flex;align-items:center;border:1px solid var(--line);border-radius:10px;background:var(--card);flex:none}
 .stepper button{border:0;background:none;font-size:22px;padding:8px 14px}
 .stepper output{min-width:46px;text-align:center;font-size:20px;font-weight:700;cursor:pointer}
-.cam{position:relative;aspect-ratio:4/3;background:#000;border-radius:14px;overflow:hidden;border:3px solid var(--accent)}
+.cam{position:relative;aspect-ratio:4/3;height:auto;background:#000;border-radius:14px;overflow:hidden;border:3px solid var(--accent)}
 .cam video{width:100%;height:100%;object-fit:cover;display:block}
-.cam .frame{position:absolute;left:12%;right:12%;top:30%;bottom:30%;border:2px dashed rgba(255,255,255,.8);border-radius:8px;pointer-events:none}
+.cam .frame{position:absolute;left:12%;right:12%;top:28%;bottom:28%;border:2px dashed rgba(255,255,255,.8);border-radius:8px;pointer-events:none}
 .cam .msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;text-align:center;padding:16px;background:rgba(0,0,0,.35)}
 .cam .tag{position:absolute;top:8px;left:8px;background:var(--accent);color:#fff;padding:2px 10px;border-radius:99px;font-weight:700;font-size:14px}
 .big{width:100%;margin:10px 0;padding:14px;font-size:17px}
@@ -59,7 +59,7 @@ label input{margin-top:4px;color:var(--fg)}
 .qty{font-size:24px;font-weight:700;min-width:40px;text-align:right}.qty.neg{color:var(--danger)}
 .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
 .chip{font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:99px;padding:1px 8px}
-.chk{display:flex;align-items:center;gap:6px;margin:0;white-space:nowrap}.chk input{width:auto}
+.chk{display:flex;align-items:center;gap:6px;margin:0;white-space:normal}.chk input{width:auto}
 .tag-in{color:var(--in);font-weight:700}.tag-out{color:var(--out);font-weight:700}
 .undone{text-decoration:line-through;opacity:.5}
 #tabs{position:fixed;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(4,1fr);background:var(--card);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
@@ -71,7 +71,8 @@ label input{margin-top:4px;color:var(--fg)}
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;z-index:50}
 .sheet{background:var(--card);width:100%;max-width:640px;max-height:88vh;overflow:auto;border-radius:18px 18px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom))}
 .sheet h3{margin-top:0;font-size:18px}
-.btns{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}.btns button{flex:1;min-width:30%}
+.btns{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;position:sticky;bottom:-16px;background:var(--card);padding:8px 0 4px}.btns button{flex:1;min-width:30%}
+.okpop.compact .mark{width:44px;height:44px;font-size:26px;margin:0 auto 4px}.okpop.compact .what{font-size:18px}
 .pick{display:block;width:100%;margin:6px 0;text-align:left}
 .kxline{margin:4px 0 8px}.kxline button{margin-left:6px;padding:4px 10px;font-size:13px}
 .kxlist{list-style:none;margin:8px 0;padding:0}
@@ -83,6 +84,13 @@ label input{margin-top:4px;color:var(--fg)}
 .verfoot{text-align:center;margin:18px 0 6px}
 .okpop{text-align:center;padding:4px 0 8px}.okpop .mark{width:72px;height:72px;margin:4px auto 10px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:42px;font-weight:800;color:#fff;background:var(--in)}
 .okpop.out .mark{background:var(--out)}.okpop.err .mark{background:var(--danger)}
+/* カメラ表示の大きさ(設定 or 画面の高さで自動) */
+body[data-cam=m] .cam{aspect-ratio:auto;height:clamp(150px,32vh,260px)}
+body[data-cam=s] .cam{aspect-ratio:auto;height:clamp(120px,24vh,190px)}
+body[data-cam=s] .cam .frame,body[data-cam=m] .cam .frame{top:18%;bottom:18%;left:10%;right:10%}
+@media (max-height:720px){.seg button{padding:10px;font-size:18px}.big{padding:11px}.camrow .big{margin:8px 0}}
+.mvf{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;text-align:left;margin-top:8px}.mvf label{margin:0}.mvf .full{grid-column:1/-1}
+.mvd{color:var(--muted);font-size:12px;display:block}
 .okpop .what{font-size:20px;font-weight:800}.okpop .nm{font-size:16px;font-weight:600;margin:4px 0}
 .shoplist{list-style:none;margin:8px 0;padding:0}.shoplist a{display:block;padding:10px 4px;border-bottom:1px solid var(--line);color:inherit;text-decoration:none}.shoplist a::after{content:'›';float:right;color:var(--muted)}
 .hist{list-style:none;padding:0;margin:0}
@@ -115,12 +123,12 @@ label input{margin-top:4px;color:var(--fg)}
       <button type="button" id="photoBtn" class="big">写真で読む</button>
     </div>
     <input type="file" id="photoIn" accept="image/*" capture="environment" hidden>
-    <div class="muted sm">カメラを開始して、バーコードを枠の中に<b>横向き</b>に映すと<b>自動で読み取ります</b>(シャッターは不要)。読めないときは「写真で読む」でバーコードを大きく撮ってください。</div>
+    <div id="last" class="card" hidden></div>
     <form id="manual" class="row">
       <input id="manualJan" inputmode="numeric" placeholder="JANを手入力(8桁・13桁)" maxlength="13" autocomplete="off">
       <button type="submit">記録</button>
     </form>
-    <div id="last" class="card" hidden></div>
+    <div class="muted sm">バーコードを枠の中に<b>横向き</b>に映すと<b>自動で読み取ります</b>(シャッター不要)。読めないときは「写真で読む」。</div>
     <h3>今回の記録</h3>
     <ul id="log" class="list"></ul>
     <div class="muted sm verfoot" id="verFoot"></div>

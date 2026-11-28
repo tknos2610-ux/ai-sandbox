@@ -136,7 +136,7 @@ function toast(msg, err) {
 }
 
 /* ---------- ダイアログ ---------- */
-function dialog({ title, body = '', buttons, onAct }) {
+function dialog({ title, body = '', buttons, onAct, noFocus = false }) {
   return new Promise((resolve) => {
     const m = $('#modal');
     m.innerHTML = `<div class="sheet" role="dialog"><h3>${esc(title)}</h3><div>${body}</div><div class="btns">${buttons.map((b, i) => `<button type="button" data-i="${i}" class="${b.cls || ''}">${esc(b.label)}</button>`).join('')}</div></div>`;
@@ -157,7 +157,7 @@ function dialog({ title, body = '', buttons, onAct }) {
       }
     };
     const first = $('[data-k]', m);
-    if (first) setTimeout(() => first.focus(), 60);
+    if (first && !noFocus) setTimeout(() => first.focus(), 60);
   });
 }
 const confirmDlg = async (title, body, label = 'OK', danger = true) =>
@@ -185,8 +185,9 @@ function showLast(m) {
   box.className = 'card ' + m.type;
   box.innerHTML = `<div class="l1"><b>${m.type === 'in' ? '入庫' : '出庫'}</b> ${esc(it?.name)} <span>×${m.qty}</span></div>
     <div class="l2">${esc(locName(m.loc))}の在庫 ${stockOf(m.jan).get(m.loc) || 0} / 全体 ${totalOf(m.jan)}</div>
+    ${moveDetailText(m) ? `<div class="l2">${esc(moveDetailText(m))}</div>` : ''}
     <div id="kxLine" class="kxline" data-jan="${esc(m.jan)}" hidden></div>
-    <button type="button" data-undo="${m.id}">取り消し</button> <button type="button" data-shop="${esc(m.jan)}">店のサイトで検索</button>`;
+    <button type="button" data-undo="${m.id}">取り消し</button> <button type="button" data-edit="${m.id}">詳細を入力</button> <button type="button" data-shop="${esc(m.jan)}">店のサイトで検索</button>`;
   kxAttach(m.jan);
 }
 function renderLog() {
@@ -210,6 +211,69 @@ async function undoLast(id) {
 let locked = false;
 let lastCode = '';
 let lastSeen = 0;
+// カメラ表示の大きさ: 自動なら画面の高さで決める(iPhone SE など低い画面は小さく)
+function applyCamSize() {
+  const v = lsGet('camSize') || 'auto';
+  document.body.dataset.cam = v !== 'auto' ? v : (innerHeight <= 720 ? 's' : innerHeight <= 860 ? 'm' : 'l');
+}
+
+/* ---------- 入出庫の詳細(任意): 日付・商品名・購入価格・ポイント・その時の買取価格 ---------- */
+const detailOn = () => lsGet('detail') === '1';
+const dateOf = (ts) => fmt(ts).slice(0, 10);
+const numOrNull = (v) => { const n = parseInt(String(v ?? '').replace(/[^0-9]/g, ''), 10); return Number.isFinite(n) ? n : null; };
+function moveFieldsHtml(m) {
+  const it = state.items.get(m.jan);
+  const isIn = m.type === 'in';
+  const kxMax = it?.kx && !it.kx.notFound ? it.kx.max_price : 0;
+  const num = (k, label, ph = '') => `<label>${label}<input data-k="${k}" inputmode="numeric" placeholder="${esc(ph)}" value="${m[k] ?? ''}" autocomplete="off"></label>`;
+  return `<div class="mvf">
+    <label class="full">${isIn ? '入庫日' : '出庫日'}<input data-k="date" type="date" value="${esc(m.date || dateOf(m.ts))}"></label>
+    <label class="full">商品名<input data-k="name" value="${esc(it?.name || '')}" autocomplete="off"></label>
+    ${isIn ? num('cost', '購入価格(円)') + num('point', 'ポイント') : ''}
+    ${num('bp', isIn ? '入庫時の買取価格(円)' : '出庫時の買取価格(円)', kxMax ? `買取X ${yen(kxMax)}` : '')}
+  </div>`;
+}
+// 入力された詳細をその入出庫履歴に保存(空欄は未入力として消す)
+async function saveMoveFields(id, f) {
+  const m = state.moves.find((x) => x.id === id);
+  if (!m) return;
+  if (f.date && f.date !== dateOf(m.ts)) m.date = f.date; else delete m.date;
+  for (const k of ['cost', 'point', 'bp']) {
+    if (!(k in f)) continue;
+    const n = numOrNull(f[k]);
+    if (n === null) delete m[k]; else m[k] = n;
+  }
+  await dbPut('moves', m);
+  const it = state.items.get(m.jan);
+  if (it && f.name && f.name !== it.name) { it.name = f.name; await dbPut('items', it); }
+  await reload();
+  if (state.lastMoveId === id && !$('#last').hidden) showLast(state.moves.find((x) => x.id === id));
+  renderLog();
+}
+function moveDetailText(m, withDate = true) {
+  const a = [];
+  if (m.date && withDate) a.push((m.type === 'in' ? '入庫日 ' : '出庫日 ') + m.date);
+  if (m.cost != null) a.push('購入' + yen(m.cost));
+  if (m.point != null) a.push('P' + m.point.toLocaleString('ja-JP'));
+  if (m.bp != null) a.push('買取' + yen(m.bp));
+  return a.join(' ・ ');
+}
+async function editMoveDialog(id) {
+  const m = state.moves.find((x) => x.id === id);
+  if (!m) { toast('この履歴は見つかりません', true); return; }
+  const prev = locked;
+  locked = true;
+  try {
+    const it = state.items.get(m.jan);
+    const r = await dialog({
+      title: `${m.type === 'in' ? '入庫' : '出庫'}の詳細`,
+      body: `<div class="muted sm">${esc(it?.name || m.jan)} ・ JAN ${esc(m.jan)} ・ ${esc(locName(m.loc))} ×${m.qty}</div>${moveFieldsHtml(m)}`,
+      buttons: [{ label: '保存', value: 'ok', cls: 'primary' }, { label: 'キャンセル', value: null }],
+    });
+    if (r.value === 'ok') { await saveMoveFields(id, r.fields); toast('保存しました'); }
+  } finally { locked = prev; }
+}
+
 // カメラで1つ読んだら確認画面を出して止める(設定でオフにできる)
 const scanStopOn = () => lsGet('scanStop') !== '0';
 async function scanResultPopup(m, errMsg) {
@@ -217,14 +281,18 @@ async function scanResultPopup(m, errMsg) {
     const it = state.items.get(m.jan);
     const r = await dialog({
       title: '読み取りOK',
-      body: `<div class="okpop ${m.type}"><div class="mark">✓</div>
+      noFocus: true,
+      body: `<div class="okpop ${m.type} ${detailOn() ? 'compact' : ''}"><div class="mark">✓</div>
         <div class="what">${m.type === 'in' ? '入庫' : '出庫'} ×${m.qty}</div>
         <div class="nm">${esc(it?.name || m.jan)}</div>
         <div class="muted sm">JAN ${esc(m.jan)}</div>
-        <div class="muted sm">${esc(locName(m.loc))}の在庫 ${stockOf(m.jan).get(m.loc) || 0} / 全体 ${totalOf(m.jan)}</div></div>`,
-      buttons: [{ label: 'OK(次を読む)', value: 'ok', cls: 'primary' }, { label: '取り消し', value: 'undo' }],
+        <div class="muted sm">${esc(locName(m.loc))}の在庫 ${stockOf(m.jan).get(m.loc) || 0} / 全体 ${totalOf(m.jan)}</div>
+        ${detailOn() ? moveFieldsHtml(m) : ''}</div>`,
+      buttons: [{ label: detailOn() ? '保存して次へ' : 'OK(次を読む)', value: 'ok', cls: 'primary' }, { label: '取り消し', value: 'undo' }],
     });
     if (r.value === 'undo') await undoLast(m.id);
+    else if (detailOn()) await saveMoveFields(m.id, r.fields);
+    $('#last').scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
   } else {
     await dialog({
       title: '記録できませんでした',
@@ -236,7 +304,7 @@ async function scanResultPopup(m, errMsg) {
 async function handleJan(jan, fromCam = false) {
   if (locked) return;
   locked = true;
-  const popup = fromCam && scanStopOn();
+  const popup = (fromCam && scanStopOn()) || detailOn(); // 詳細入力がオンなら手入力のときも出す
   let done = null, errMsg = '';
   const fail = (msg) => { beep('err'); if (popup) errMsg = msg; else toast(msg, true); };
   try {
@@ -665,19 +733,21 @@ async function showItem(jan) {
     <div class="chips">${st.map(([l, q]) => `<span class="chip">${esc(locName(l))} ${q}</span>`).join('') || '<span class="muted">在庫なし</span>'}</div>
     <div class="kxline">${kxOn() ? `${it.kx && !it.kx.notFound ? `<span class="sm">${kxSummary(it.kx)}</span> ` : ''}<button type="button" data-act="kx">買取価格一覧</button>` : ''}<button type="button" data-act="shop">店のサイトで検索</button></div>
     <h4>履歴(新しい順・最大50件)</h4>
-    <ul class="hist">${hist.map((m) => `<li><span class="${m.type === 'in' ? 'tag-in' : 'tag-out'}">${m.type === 'in' ? '入庫' : '出庫'}</span><span>${fmt(m.ts)} ${esc(locName(m.loc))} ×${m.qty}</span><button type="button" data-act="delmove" data-id="${m.id}">削除</button></li>`).join('') || '<li class="muted">履歴なし</li>'}</ul>`;
+    <ul class="hist">${hist.map((m) => `<li><span class="${m.type === 'in' ? 'tag-in' : 'tag-out'}">${m.type === 'in' ? '入庫' : '出庫'}</span><span class="grow">${m.date ? esc(m.date) : fmt(m.ts)} ${esc(locName(m.loc))} ×${m.qty}${moveDetailText(m, false) ? `<span class="mvd">${esc(moveDetailText(m, false))}</span>` : ''}</span><button type="button" data-act="editmove" data-id="${m.id}">詳細</button><button type="button" data-act="delmove" data-id="${m.id}">削除</button></li>`).join('') || '<li class="muted">履歴なし</li>'}</ul>`;
   const r = await dialog({
     title: '商品の詳細',
     body,
     buttons: [{ label: '保存', value: 'save', cls: 'primary' }, { label: '閉じる', value: null }, { label: '商品を削除', value: 'del', cls: 'danger' }],
     onAct: (el, close) => {
       if (el.dataset.act === 'delmove') close({ value: 'delmove', id: Number(el.dataset.id), fields: {} });
+      if (el.dataset.act === 'editmove') close({ value: 'editmove', id: Number(el.dataset.id), fields: {} });
       if (el.dataset.act === 'kx') close({ value: 'kx', fields: {} });
       if (el.dataset.act === 'shop') close({ value: 'shop', fields: {} });
     },
   });
   if (r.value === 'kx') { await kxDialog(jan); showItem(jan); return; }
   if (r.value === 'shop') { await shopSearchDialog(jan); showItem(jan); return; }
+  if (r.value === 'editmove') { await editMoveDialog(r.id); renderStock(); showItem(jan); return; }
   if (r.value === 'save') {
     it.name = r.fields.name || it.name;
     it.memo = r.fields.memo || '';
@@ -734,8 +804,8 @@ function buildBackup() {
 }
 const csvCell = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
 function buildMovesCsv() {
-  const rows = [['日時', '種別', 'JAN', '商品名', '倉庫', '数量']];
-  [...state.moves].sort((a, b) => a.ts - b.ts).forEach((m) => rows.push([fmt(m.ts), m.type === 'in' ? '入庫' : '出庫', m.jan, state.items.get(m.jan)?.name, locName(m.loc), m.qty]));
+  const rows = [['記録日時', '入出庫日', '種別', 'JAN', '商品名', '倉庫', '数量', '購入価格', 'ポイント', '買取価格']];
+  [...state.moves].sort((a, b) => a.ts - b.ts).forEach((m) => rows.push([fmt(m.ts), m.date || dateOf(m.ts), m.type === 'in' ? '入庫' : '出庫', m.jan, state.items.get(m.jan)?.name, locName(m.loc), m.qty, m.cost ?? '', m.point ?? '', m.bp ?? '']));
   return '\ufeff' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
 }
 function buildStockCsv() {
@@ -791,6 +861,8 @@ function renderSettings() {
     </div>
     <div class="set"><h4>動作</h4>
       <label class="chk"><input type="checkbox" data-opt="allowNeg" ${lsGet('allowNeg') === '1' ? 'checked' : ''}>在庫0でも出庫を許可する(マイナス在庫)</label>
+      <label class="chk"><input type="checkbox" data-opt="detail" ${detailOn() ? 'checked' : ''}>入出庫のときに詳細(日付・商品名・購入価格・ポイント・買取価格)を入力する</label>
+      <label>カメラ表示の大きさ<select data-opt="camSize">${[['auto', '自動(画面の高さに合わせる)'], ['s', '小'], ['m', '中'], ['l', '大']].map(([v, l]) => `<option value="${v}" ${(lsGet('camSize') || 'auto') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <label class="chk"><input type="checkbox" data-opt="scanStop" ${scanStopOn() ? 'checked' : ''}>カメラで1つ読んだら確認画面で止める(OKで次へ)</label>
       <label class="chk"><input type="checkbox" data-opt="sound" ${lsGet('sound') !== '0' ? 'checked' : ''}>読み取り音を鳴らす</label>
     </div>
@@ -1006,6 +1078,7 @@ function bind() {
     const b = e.target.closest('[data-undo]'); if (b) undoLast(Number(b.dataset.undo));
     const k = e.target.closest('[data-kx]'); if (k) kxDialog(k.dataset.kx);
     const sh = e.target.closest('[data-shop]'); if (sh) shopSearchDialog(sh.dataset.shop);
+    const ed = e.target.closest('[data-edit]'); if (ed) editMoveDialog(Number(ed.dataset.edit));
   });
   $('#log').addEventListener('click', (e) => { const li = e.target.closest('li[data-jan]'); if (li) (kxOn() ? kxDialog(li.dataset.jan) : shopSearchDialog(li.dataset.jan)); });
   $('#bkBanner').addEventListener('click', () => showTab('settings'));
@@ -1026,6 +1099,8 @@ function bind() {
     if (o === 'sound') lsSet('sound', e.target.checked ? '1' : '0');
     if (o === 'kxOn') lsSet('kxOn', e.target.checked ? '1' : '0');
     if (o === 'scanStop') lsSet('scanStop', e.target.checked ? '1' : '0');
+    if (o === 'detail') lsSet('detail', e.target.checked ? '1' : '0');
+    if (o === 'camSize') { lsSet('camSize', e.target.value); applyCamSize(); }
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopCam(); });
 }
@@ -1036,6 +1111,8 @@ async function init() {
   await reload();
   if (!state.locs.length) { await dbPut('locations', { name: '倉庫1' }); await reload(); }
   bind();
+  applyCamSize();
+  addEventListener('resize', applyCamSize);
   showVerFoot();
   setMode(state.mode);
   refreshLocSel();
