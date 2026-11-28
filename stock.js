@@ -176,6 +176,7 @@ async function record(type, jan, loc, qty) {
   renderLog();
   state.qty = 1;
   updateQty();
+  return m;
 }
 function showLast(m) {
   const it = state.items.get(m.jan);
@@ -209,9 +210,35 @@ async function undoLast(id) {
 let locked = false;
 let lastCode = '';
 let lastSeen = 0;
-async function handleJan(jan) {
+// カメラで1つ読んだら確認画面を出して止める(設定でオフにできる)
+const scanStopOn = () => lsGet('scanStop') !== '0';
+async function scanResultPopup(m, errMsg) {
+  if (m) {
+    const it = state.items.get(m.jan);
+    const r = await dialog({
+      title: '読み取りOK',
+      body: `<div class="okpop ${m.type}"><div class="mark">✓</div>
+        <div class="what">${m.type === 'in' ? '入庫' : '出庫'} ×${m.qty}</div>
+        <div class="nm">${esc(it?.name || m.jan)}</div>
+        <div class="muted sm">JAN ${esc(m.jan)}</div>
+        <div class="muted sm">${esc(locName(m.loc))}の在庫 ${stockOf(m.jan).get(m.loc) || 0} / 全体 ${totalOf(m.jan)}</div></div>`,
+      buttons: [{ label: 'OK(次を読む)', value: 'ok', cls: 'primary' }, { label: '取り消し', value: 'undo' }],
+    });
+    if (r.value === 'undo') await undoLast(m.id);
+  } else {
+    await dialog({
+      title: '記録できませんでした',
+      body: `<div class="okpop err"><div class="mark">!</div><div class="nm">${esc(errMsg)}</div></div>`,
+      buttons: [{ label: 'OK(次を読む)', value: 'ok', cls: 'primary' }],
+    });
+  }
+}
+async function handleJan(jan, fromCam = false) {
   if (locked) return;
   locked = true;
+  const popup = fromCam && scanStopOn();
+  let done = null, errMsg = '';
+  const fail = (msg) => { beep('err'); if (popup) errMsg = msg; else toast(msg, true); };
   try {
     let it = state.items.get(jan);
     if (state.mode === 'in') {
@@ -230,13 +257,13 @@ async function handleJan(jan) {
         await dbPut('items', it);
         await reload();
       }
-      await record('in', jan, state.locId, state.qty);
+      done = await record('in', jan, state.locId, state.qty);
     } else {
-      if (!it) { beep('err'); toast(`未登録のJANです(${jan})`, true); return; }
+      if (!it) { fail(`未登録のJANです(${jan})`); return; }
       const st = stockOf(jan);
       const need = state.qty;
       const here = st.get(state.locId) || 0;
-      if (here >= need) { await record('out', jan, state.locId, need); return; }
+      if (here >= need) { done = await record('out', jan, state.locId, need); return; }
       const cands = [...st].filter(([, q]) => q >= need).sort((a, b) => b[1] - a[1]);
       if (cands.length) {
         const r = await dialog({
@@ -247,18 +274,19 @@ async function handleJan(jan) {
           onAct: (el, close) => close({ value: 'pick', loc: Number(el.dataset.loc), fields: {} }),
         });
         if (r.value !== 'pick') return;
-        await record('out', jan, r.loc, need);
+        done = await record('out', jan, r.loc, need);
         return;
       }
-      if (lsGet('allowNeg') === '1') { await record('out', jan, state.locId, need); return; }
-      beep('err');
+      if (lsGet('allowNeg') === '1') { done = await record('out', jan, state.locId, need); return; }
       const max = Math.max(0, ...st.values());
-      toast(max > 0 ? `在庫不足です(${it.name}: 最大${max})` : `${it.name} は在庫がありません`, true);
+      fail(max > 0 ? `在庫不足です(${it.name}: 最大${max})` : `${it.name} は在庫がありません`);
     }
   } catch (e) {
     console.error(e);
-    toast('エラー: ' + (e.message || e), true);
+    fail('エラー: ' + (e.message || e));
   } finally {
+    // 確認画面を閉じるまでは次を読まない(locked のまま)
+    if (popup && (done || errMsg)) { try { await scanResultPopup(done, errMsg); } catch { /* ignore */ } }
     locked = false;
     lastSeen = Date.now();
   }
@@ -398,7 +426,7 @@ function onCode(raw) {
   if (jan === lastCode && now - lastSeen < 1500) { lastSeen = now; return; }
   lastCode = jan;
   lastSeen = now;
-  handleJan(jan);
+  handleJan(jan, true);
 }
 
 /* ---------- カメラ ---------- */
@@ -761,6 +789,7 @@ function renderSettings() {
     </div>
     <div class="set"><h4>動作</h4>
       <label class="chk"><input type="checkbox" data-opt="allowNeg" ${lsGet('allowNeg') === '1' ? 'checked' : ''}>在庫0でも出庫を許可する(マイナス在庫)</label>
+      <label class="chk"><input type="checkbox" data-opt="scanStop" ${scanStopOn() ? 'checked' : ''}>カメラで1つ読んだら確認画面で止める(OKで次へ)</label>
       <label class="chk"><input type="checkbox" data-opt="sound" ${lsGet('sound') !== '0' ? 'checked' : ''}>読み取り音を鳴らす</label>
     </div>
     <div class="set"><h4>アプリ</h4>
@@ -994,6 +1023,7 @@ function bind() {
     if (o === 'allowNeg') lsSet('allowNeg', e.target.checked ? '1' : '0');
     if (o === 'sound') lsSet('sound', e.target.checked ? '1' : '0');
     if (o === 'kxOn') lsSet('kxOn', e.target.checked ? '1' : '0');
+    if (o === 'scanStop') lsSet('scanStop', e.target.checked ? '1' : '0');
   });
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopCam(); });
 }
