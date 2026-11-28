@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#14b8a6"/><stop offset="1" stop-color="#0b5d56"/>
+    </linearGradient>
+    <linearGradient id="front" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7c983"/><stop offset="1" stop-color="#e9a95a"/>
+    </linearGradient>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#04302c" flood-opacity=".35"/>
+    </filter>
+    <filter id="glow" x="-10%" y="-200%" width="120%" height="500%">
+      <feGaussianBlur stdDeviation="5"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <g id="content">
+    <!-- 読み取り枠の角 -->
+    <g fill="none" stroke="#ffffff" stroke-width="22" stroke-linecap="round" stroke-linejoin="round" opacity=".95">
+      <path d="M86 156 V112 Q86 86 112 86 H156"/>
+      <path d="M356 86 H400 Q426 86 426 112 V156"/>
+      <path d="M426 356 V400 Q426 426 400 426 H356"/>
+      <path d="M156 426 H112 Q86 426 86 400 V356"/>
+    </g>
+    <!-- 段ボール箱 -->
+    <g filter="url(#sh)">
+      <path d="M146 196 L196 150 H316 L366 196 Z" fill="#d48f3f"/>
+      <rect x="146" y="196" width="220" height="172" rx="14" fill="url(#front)"/>
+      <path d="M238 150 H274 L284 196 H228 Z" fill="#f3dcb0"/>
+      <rect x="228" y="196" width="56" height="44" fill="#f3dcb0"/>
+      <!-- バーコードラベル -->
+      <rect x="176" y="258" width="160" height="86" rx="8" fill="#ffffff"/>
+      <g fill="#1f2937">
+        <rect x="190" y="270" width="6" height="62"/><rect x="200" y="270" width="3" height="62"/>
+        <rect x="208" y="270" width="8" height="62"/><rect x="221" y="270" width="3" height="62"/>
+        <rect x="229" y="270" width="5" height="62"/><rect x="239" y="270" width="3" height="62"/>
+        <rect x="246" y="270" width="8" height="62"/><rect x="258" y="270" width="3" height="62"/>
+        <rect x="265" y="270" width="6" height="62"/><rect x="276" y="270" width="3" height="62"/>
+        <rect x="283" y="270" width="8" height="62"/><rect x="295" y="270" width="3" height="62"/>
+        <rect x="302" y="270" width="5" height="62"/><rect x="312" y="270" width="7" height="62"/>
+      </g>
+    </g>
+    <!-- スキャンライン -->
+    <rect x="112" y="294" width="288" height="10" rx="5" fill="#4ade80" filter="url(#glow)" opacity=".9"/>
+    <rect x="112" y="296" width="288" height="6" rx="3" fill="#bbf7d0"/>
+  </g>
+</svg>

@@ -12,7 +12,7 @@ const PREFIX = 'sedori-stock-v';
 const VER = PREFIX + APP_VER;
 const META = 'sedori-stock-meta';
 const META_KEY = 'meta.json';
-const ASSETS = ['stock.html', 'stock.js', 'stock-version.js', 'stock.webmanifest', 'stock-icon-180.png', 'stock-icon-192.png', 'stock-icon-512.png'];
+const ASSETS = ['stock.html', 'stock.js', 'stock-version.js', 'stock.webmanifest', 'stock-icon-180.png', 'stock-icon-192.png', 'stock-icon-512.png', 'stock-icon-maskable-512.png'];
 const ZX = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
 
 /* ---- メタ情報 { current, previous, pin } (キャッシュ内にJSONで保存) ---- */
